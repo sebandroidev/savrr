@@ -90,14 +90,16 @@ pub async fn ensure_game(
     // devices registering the same brand-new appid at the same instant. Add a
     // partial UNIQUE(account_id, steam_appid) index if that race ever bites.
     let existing = match steam_appid {
-        Some(appid) => sqlx::query(
-            "SELECT id, title, steam_appid, head FROM games
+        Some(appid) => {
+            sqlx::query(
+                "SELECT id, title, steam_appid, head FROM games
              WHERE account_id = ? AND steam_appid = ?",
-        )
-        .bind(account.to_string())
-        .bind(appid as i64)
-        .fetch_optional(pool)
-        .await?,
+            )
+            .bind(account.to_string())
+            .bind(appid as i64)
+            .fetch_optional(pool)
+            .await?
+        }
         None => None,
     };
 

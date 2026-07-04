@@ -29,7 +29,12 @@ async fn dedups_by_appid_not_title() {
     let ctx = setup().await;
     let app = ctx.app.clone();
 
-    let id1 = ensure(&app, &ctx.token, json!({ "title": "Half-Life 2", "steam_appid": 220 })).await;
+    let id1 = ensure(
+        &app,
+        &ctx.token,
+        json!({ "title": "Half-Life 2", "steam_appid": 220 }),
+    )
+    .await;
     // Same appid, different title (as another device would send) -> same game.
     let id2 = ensure(
         &app,
@@ -37,14 +42,32 @@ async fn dedups_by_appid_not_title() {
         json!({ "title": "Half-Life 2 (Steam)", "steam_appid": 220 }),
     )
     .await;
-    assert_eq!(id2, id1, "same appid must dedup to one game regardless of title");
+    assert_eq!(
+        id2, id1,
+        "same appid must dedup to one game regardless of title"
+    );
 
     // A different appid is a different game.
-    let id3 = ensure(&app, &ctx.token, json!({ "title": "Portal", "steam_appid": 400 })).await;
+    let id3 = ensure(
+        &app,
+        &ctx.token,
+        json!({ "title": "Portal", "steam_appid": 400 }),
+    )
+    .await;
     assert_ne!(id3, id1, "different appid must be a distinct game");
 
     // Custom games (no appid) still dedup by title.
-    let c1 = ensure(&app, &ctx.token, json!({ "title": "My Mod", "steam_appid": null })).await;
-    let c2 = ensure(&app, &ctx.token, json!({ "title": "My Mod", "steam_appid": null })).await;
+    let c1 = ensure(
+        &app,
+        &ctx.token,
+        json!({ "title": "My Mod", "steam_appid": null }),
+    )
+    .await;
+    let c2 = ensure(
+        &app,
+        &ctx.token,
+        json!({ "title": "My Mod", "steam_appid": null }),
+    )
+    .await;
     assert_eq!(c2, c1, "custom games dedup by title");
 }
