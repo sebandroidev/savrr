@@ -51,22 +51,27 @@ Put it behind TLS before you expose it. The simplest path for a home setup is [T
 
 ## Installing the desktop pieces
 
-Grab the installer for your OS from the [latest release](https://github.com/sebandroidev/savrr/releases/latest). It bundles the daemon, registers it as a login service, and walks you through pairing the device with your server on first run. The app updates itself through GitHub releases after that.
+Grab the installer for your OS from the [latest release](https://github.com/sebandroidev/savrr/releases/latest). The daemon is bundled inside the app, so there's nothing separate to install — the app starts it for you, lives in the system tray, and keeps syncing in the background when you close the window. It walks you through pairing with your server on first run, and updates itself through GitHub releases after that.
 
 ## Building from source
 
 You need Rust (stable), Node 22+, and pnpm.
 
+The desktop app embeds two things at compile time: the built frontend, and the daemon binary it ships as a bundled sidecar. Both have to exist before `savr-app` will build, so on a fresh clone the order matters:
+
 ```bash
-# everything Rust
-cargo build --workspace
-
-# the whole test suite
-cargo test --workspace
-
-# the desktop app (frontend first, then the Tauri shell)
+# 1. build the frontend the app embeds
 pnpm --dir crates/savr-app/ui install
 pnpm --dir crates/savr-app/ui build
+
+# 2. build + stage the daemon the app bundles (into src-tauri/binaries/)
+scripts/stage-sidecar.sh
+
+# 3. now the workspace compiles and tests
+cargo build --workspace
+cargo test --workspace
+
+# and the desktop bundle
 cargo tauri build --config crates/savr-app/src-tauri/tauri.conf.json
 ```
 

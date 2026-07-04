@@ -49,6 +49,13 @@ async fn connect() -> Result<Stream, CmdError> {
         .map_err(|e| CmdError::DaemonUnreachable(e.to_string()))
 }
 
+/// True if a daemon is already accepting connections on the shared endpoint.
+/// The supervisor uses this to defer to an existing daemon instead of spawning
+/// a second one that would fight over the same socket + database.
+pub async fn is_daemon_running() -> bool {
+    connect().await.is_ok()
+}
+
 /// Send one request, read one reply. A `DaemonMsg::Error` is surfaced as a
 /// [`CmdError::Daemon`]; every other variant is handed back to the caller to
 /// match against what it expects for that request.

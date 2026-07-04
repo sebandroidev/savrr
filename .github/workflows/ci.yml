@@ -58,6 +58,21 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
+      # The app bundles the daemon as a Tauri sidecar (externalBin), and
+      # tauri-build fails to compile if that binary is absent — so stage a
+      # host-target build before anything touches the app crate.
+      - name: Stage the daemon sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEST="crates/savr-app/src-tauri/binaries"
+          mkdir -p "$DEST"
+          TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+          EXE=""
+          [ "${{ runner.os }}" = "Windows" ] && EXE=".exe"
+          cargo build -p savr-daemon
+          cp "target/debug/savr-daemon${EXE}" "$DEST/savr-daemon-${TRIPLE}${EXE}"
+
       - name: rustfmt
         if: runner.os == 'Linux'
         run: cargo fmt --all --check

@@ -6,19 +6,22 @@ Thanks for taking a look. Savrr is early, which means there's a lot to do and th
 
 You need Rust (stable), Node 22 or newer, and pnpm. On Linux you also need the GTK and WebKit development packages for the desktop app; the exact list is in `.github/workflows/ci.yml` under the Linux deps step.
 
+The desktop app embeds its frontend and bundles the daemon as a sidecar, and both have to exist before `savr-app` will compile — so stage them before the first build, or `cargo build --workspace` fails on the missing sidecar:
+
 ```bash
 git clone https://github.com/sebandroidev/savrr
 cd savrr
+
+# the app embeds these two, so build/stage them first
+pnpm --dir crates/savr-app/ui install
+pnpm --dir crates/savr-app/ui build
+scripts/stage-sidecar.sh
+
 cargo build --workspace
 cargo test --workspace
 ```
 
-The desktop app has a frontend that has to be built before its Rust side will compile:
-
-```bash
-pnpm --dir crates/savr-app/ui install
-pnpm --dir crates/savr-app/ui build
-```
+`scripts/stage-sidecar.sh` builds `savr-daemon` and drops it in `crates/savr-app/src-tauri/binaries/` where Tauri expects the sidecar. Re-run it if you change the daemon and want the bundled copy refreshed. CI stages it the same way.
 
 ## Where things live
 

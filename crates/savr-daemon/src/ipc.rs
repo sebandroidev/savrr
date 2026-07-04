@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use interprocess::local_socket::tokio::prelude::*;
+use interprocess::local_socket::tokio::Stream;
 use interprocess::local_socket::{ListenerOptions, Name};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -27,14 +28,33 @@ use interprocess::local_socket::GenericNamespaced;
 /// How many outbound frames may queue per connection before backpressure.
 const OUT_BUFFER: usize = 64;
 
+/// True if a daemon is already accepting connections on `path`. Used to avoid
+/// two daemons fighting over one socket and one database: a would-be second
+/// instance connect-probes first and, if a live peer answers, steps aside
+/// instead of unlinking and stealing the socket.
+pub async fn is_listening(path: &str) -> bool {
+    let Ok(name) = socket_name(path) else {
+        return false;
+    };
+    Stream::connect(name).await.is_ok()
+}
+
 /// Run the IPC listener until `shutdown` flips to `true`.
 pub async fn run_ipc_server(
     engine: Arc<Engine>,
     path: String,
     mut shutdown: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
+    // Never unlink and steal a socket a live daemon still owns. `main` already
+    // refuses to start a second instance; this is belt-and-braces for the case
+    // run_ipc_server is reached with a peer already listening.
+    if is_listening(&path).await {
+        anyhow::bail!("another process is already listening on {path}");
+    }
+
     // The endpoint may live under $XDG_RUNTIME_DIR/savr/ — create the parent
     // dir, and clear any leftover socket file from a crash (both unix-only).
+    // Safe to remove now: nothing was listening on it above.
     #[cfg(unix)]
     {
         if let Some(parent) = std::path::Path::new(&path).parent() {

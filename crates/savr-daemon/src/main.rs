@@ -42,7 +42,34 @@ async fn main() -> anyhow::Result<()> {
     let (events, _keepalive) = broadcast::channel(256);
     let engine = Engine::new(config.clone(), state, secret_store, events.clone()).await?;
 
-    // FIRST TASK (PRD-02 §1.1): fetch + parse the real manifest, log the count.
+    // Single-instance guard: if a daemon already owns the endpoint (a leftover
+    // process, or the one a bundled GUI already launched), step aside rather
+    // than run a second watcher/event loop against the same socket + database.
+    let ipc_endpoint = ipc_path();
+    if ipc::is_listening(&ipc_endpoint).await {
+        tracing::warn!("another savr-daemon is already running on {ipc_endpoint}; exiting");
+        return Ok(());
+    }
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let mut tasks: Vec<JoinHandle<()>> = Vec::new();
+
+    // Bind IPC FIRST — before the (possibly slow, network-bound) manifest fetch
+    // — so the GUI can connect the instant it opens instead of getting
+    // DaemonUnreachable on a cold start. The engine already answers from
+    // whatever state it holds; the catalog fills in once refresh_games runs.
+    {
+        let engine = engine.clone();
+        let path = ipc_endpoint.clone();
+        let rx = shutdown_rx.clone();
+        tasks.push(tokio::spawn(async move {
+            if let Err(e) = ipc::run_ipc_server(engine, path, rx).await {
+                tracing::error!("ipc server error: {e}");
+            }
+        }));
+    }
+
+    // FIRST BACKGROUND TASK (PRD-02 §1.1): fetch + parse the real manifest.
     let manifest_dir = config.manifest_dir();
     match manifest_sync::refresh(&manifest_dir).await {
         Ok(outcome) => {
@@ -65,14 +92,12 @@ async fn main() -> anyhow::Result<()> {
 
     tray::spawn();
 
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let tuning = WatchTuning {
         active_interval: Duration::from_millis(config.poll_interval_ms),
         idle_interval: Duration::from_millis(config.poll_idle_interval_ms),
         settle: Duration::from_millis(config.settle_ms),
     };
 
-    let mut tasks: Vec<JoinHandle<()>> = Vec::new();
     tasks.push(tokio::spawn(run_watcher(
         engine.exe_index(),
         tuning,
@@ -86,16 +111,6 @@ async fn main() -> anyhow::Result<()> {
         engine.clone(),
         shutdown_rx.clone(),
     )));
-    {
-        let engine = engine.clone();
-        let path = ipc_path();
-        let rx = shutdown_rx.clone();
-        tasks.push(tokio::spawn(async move {
-            if let Err(e) = ipc::run_ipc_server(engine, path, rx).await {
-                tracing::error!("ipc server error: {e}");
-            }
-        }));
-    }
     tasks.push(tokio::spawn(outbox_loop(
         engine.clone(),
         shutdown_rx.clone(),

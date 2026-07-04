@@ -14,6 +14,10 @@ The first working slice of the whole system: shared core, server, headless daemo
 - **savr-app**: a Tauri v2 desktop app with a Svelte UI for pairing, managing watched folders, browsing history, restoring saves, and resolving conflicts. Updates itself through GitHub releases.
 - Docker image and Compose file for the server, and CI plus release automation for all four pieces.
 
+### Changed
+
+- The desktop app now bundles the daemon and runs it for you, so installing the app is the whole install. It starts the daemon on launch, restarts it if it crashes, and stops it when you quit. Closing the window hides the app to the system tray instead of quitting, so a background sync keeps going; "Quit Savr" from the tray is the real exit. If a daemon is already running — the headless binary is still published for servers — the app uses it instead of starting a second one, and a second app launch just reopens the running window rather than spawning another.
+
 ### Security
 
 - An adversarial code review before release fixed a device-revocation gap (a revoked device kept its WebSocket), an offline-differential backup inconsistency, a config-sync tag drop, and a device-state oracle on `/auth/refresh`. Remaining known issues are tracked in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).

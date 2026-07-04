@@ -17,11 +17,15 @@ tauri-build = { version = "2" }
 # app + daemon both need the length-prefixed IPC frame codec (feature = "ipc").
 savr-core = { path = "../../savr-core", features = ["ipc"] }
 
-tauri = { version = "2" }
+# tray-icon: the app owns the system tray so it can live in the background
+# while the window is hidden and keep the bundled daemon running.
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 # Needed so the updater flow can relaunch the app after installing.
 tauri-plugin-process = "2"
+# Spawns the bundled daemon sidecar (declared in tauri.conf.json externalBin).
+tauri-plugin-shell = "2"
 
 # interprocess gives one abstraction over unix sockets / windows named pipes;
 # the "tokio" feature yields streams that impl tokio AsyncRead/AsyncWrite, which
@@ -36,3 +40,9 @@ thiserror.workspace = true
 dirs.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+# Forwards a second launch to the running instance so we never start two apps
+# (hence two daemons fighting over the socket + DB). Desktop-only — `desktop`
+# isn't a cargo dep-resolution cfg, so express it as "not mobile".
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"

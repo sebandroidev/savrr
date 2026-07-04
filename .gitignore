@@ -9,6 +9,9 @@
 # Tauri generated
 crates/savr-app/src-tauri/gen
 
+# Bundled daemon sidecar (built artifact; staged by scripts/stage-sidecar.sh or CI)
+crates/savr-app/src-tauri/binaries
+
 # Runtime data
 /data
 docker/data
