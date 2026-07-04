@@ -96,11 +96,12 @@ jobs:
           DEST="crates/savr-app/src-tauri/binaries"
           mkdir -p "$DEST"
           if [ "${{ matrix.target }}" = "universal-apple-darwin" ]; then
+            # Tauri builds each arch slice on its own and lipos them itself, so
+            # it wants a PER-ARCH sidecar for each slice — not a pre-lipo'd one.
             cargo build --release -p savr-daemon --target aarch64-apple-darwin
             cargo build --release -p savr-daemon --target x86_64-apple-darwin
-            lipo -create -output "$DEST/savr-daemon-universal-apple-darwin" \
-              target/aarch64-apple-darwin/release/savr-daemon \
-              target/x86_64-apple-darwin/release/savr-daemon
+            cp target/aarch64-apple-darwin/release/savr-daemon "$DEST/savr-daemon-aarch64-apple-darwin"
+            cp target/x86_64-apple-darwin/release/savr-daemon "$DEST/savr-daemon-x86_64-apple-darwin"
           else
             TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
             EXE=""
@@ -151,7 +152,17 @@ jobs:
         shell: bash
         run: |
           cp "target/release/savr-daemon${{ matrix.ext }}" "${{ matrix.name }}"
-          gh release upload "${GITHUB_REF_NAME}" "${{ matrix.name }}" --clobber
+          # Several jobs upload to the same draft release at once; GitHub can
+          # return a transient 404 under that contention, so retry.
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "${GITHUB_REF_NAME}" "${{ matrix.name }}" --clobber; then
+              exit 0
+            fi
+            echo "upload attempt $attempt failed; retrying in $((attempt * 5))s"
+            sleep $((attempt * 5))
+          done
+          echo "release upload still failing after retries" >&2
+          exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
