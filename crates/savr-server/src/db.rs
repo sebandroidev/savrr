@@ -82,25 +82,49 @@ pub async fn ensure_game(
     title: &str,
     steam_appid: Option<u32>,
 ) -> Result<Value, ApiError> {
-    let id = Uuid::now_v7().to_string();
-    sqlx::query(
-        "INSERT INTO games (id, account_id, title, steam_appid) VALUES (?, ?, ?, ?)
-         ON CONFLICT(account_id, title) DO NOTHING",
-    )
-    .bind(&id)
-    .bind(account.to_string())
-    .bind(title)
-    .bind(steam_appid.map(|a| a as i64))
-    .execute(pool)
-    .await?;
+    // Steam games carry a stable appid; dedup on it so a title that legitimately
+    // varies across devices (Ludusavi manifest title vs .acf name, localization)
+    // never mints a duplicate game that splits history. Custom games (no appid)
+    // still dedup by title.
+    // ponytail: the appid SELECT covers the steady state; the only gap is two
+    // devices registering the same brand-new appid at the same instant. Add a
+    // partial UNIQUE(account_id, steam_appid) index if that race ever bites.
+    let existing = match steam_appid {
+        Some(appid) => sqlx::query(
+            "SELECT id, title, steam_appid, head FROM games
+             WHERE account_id = ? AND steam_appid = ?",
+        )
+        .bind(account.to_string())
+        .bind(appid as i64)
+        .fetch_optional(pool)
+        .await?,
+        None => None,
+    };
 
-    let row = sqlx::query(
-        "SELECT id, title, steam_appid, head FROM games WHERE account_id = ? AND title = ?",
-    )
-    .bind(account.to_string())
-    .bind(title)
-    .fetch_one(pool)
-    .await?;
+    let row = match existing {
+        Some(row) => row,
+        None => {
+            let id = Uuid::now_v7().to_string();
+            sqlx::query(
+                "INSERT INTO games (id, account_id, title, steam_appid) VALUES (?, ?, ?, ?)
+                 ON CONFLICT(account_id, title) DO NOTHING",
+            )
+            .bind(&id)
+            .bind(account.to_string())
+            .bind(title)
+            .bind(steam_appid.map(|a| a as i64))
+            .execute(pool)
+            .await?;
+
+            sqlx::query(
+                "SELECT id, title, steam_appid, head FROM games WHERE account_id = ? AND title = ?",
+            )
+            .bind(account.to_string())
+            .bind(title)
+            .fetch_one(pool)
+            .await?
+        }
+    };
     Ok(json!({
         "id": row.get::<String, _>("id"),
         "title": row.get::<String, _>("title"),

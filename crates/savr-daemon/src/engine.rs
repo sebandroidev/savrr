@@ -243,10 +243,12 @@ impl Engine {
     /// already-uploaded local id with the server id is a follow-up.
     async fn game_id_for(&self, appid: u32, title: &str, authed: bool) -> GameId {
         let key = format!("gameid:steam:{appid}");
-        let cached = self
-            .state
-            .get_meta(&key)
-            .await
+        // Distinguish a read ERROR from a genuinely-absent key: on a transient DB
+        // hiccup we must NOT mint-and-persist a fresh id, or we'd clobber the
+        // stable id still on disk and orphan all history keyed by it.
+        let read = self.state.get_meta(&key).await;
+        let read_ok = read.is_ok();
+        let cached = read
             .ok()
             .flatten()
             .and_then(|s| uuid::Uuid::parse_str(&s).ok());
@@ -268,7 +270,14 @@ impl Engine {
             return id;
         }
         let id = uuid::Uuid::now_v7();
-        let _ = self.state.set_meta(&key, &id.to_string()).await;
+        if read_ok {
+            // Key genuinely absent — safe to persist this as the stable id.
+            let _ = self.state.set_meta(&key, &id.to_string()).await;
+        } else {
+            tracing::warn!(
+                "get_meta({key}) failed; using an ephemeral id this refresh, not persisting"
+            );
+        }
         id
     }
 

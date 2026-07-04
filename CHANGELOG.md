@@ -2,6 +2,21 @@
 
 Notable changes to Savrr. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions aim for [semantic versioning](https://semver.org/spec/v2.0.0.html) once past 1.0.
 
+## [0.1.2] - 2026-07-04
+
+Your games stick around, and Savr sees more of them.
+
+### Fixed
+
+- After pairing, relaunching the app showed an empty games list: a server call that failed during startup threw away the whole catalog. The catalog now survives a server hiccup and falls back to a local id until the server is reachable again.
+- "Back up now" on a game whose save location Savr doesn't know yet no longer claims it queued a backup. It tells you to turn on Learn mode and play the game once so Savr can find the saves.
+- Restoring a game with no known save paths is refused instead of writing and deleting files under your home directory.
+
+### Changed
+
+- Savr lists every installed Steam game, not just the ones already in its save-location database. Ones it doesn't recognize yet still appear; play one with Learn mode on and it learns where that game saves. Steam's own plumbing — Proton, the Linux runtimes, the redistributables bundle, SteamVR — is left out, and titles that are still downloading are held back until they finish installing.
+- A Steam game is matched across your devices by its Steam app id, so two devices that show it under slightly different names no longer split its history into two.
+
 ## [0.1.1] - 2026-07-04
 
 The daemon moves inside the app.
@@ -26,5 +41,6 @@ The first working slice of the whole system: shared core, server, headless daemo
 
 - An adversarial code review before release fixed a device-revocation gap (a revoked device kept its WebSocket), an offline-differential backup inconsistency, a config-sync tag drop, and a device-state oracle on `/auth/refresh`. Remaining known issues are tracked in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
+[0.1.2]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.2
 [0.1.1]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.1
 [0.1.0]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.0

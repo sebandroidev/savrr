@@ -244,16 +244,46 @@ pub fn parse_library_paths(vdf: &str) -> Vec<PathBuf> {
     out
 }
 
-/// Extract `(appid, installdir)` from an `appmanifest_*.acf`.
+/// Steam installs infrastructure — Proton builds, Linux runtimes, the
+/// redistributables bundle, SteamVR — as ordinary appmanifests. None are games,
+/// none have saves, and indexing their wrapper binaries pollutes the exe index
+/// with false detection hits. Reject the known ones by appid or install dir.
+fn is_non_game_app(appid: u32, installdir: &str) -> bool {
+    matches!(appid, 228980 | 250820) // Steamworks Common Redistributables, SteamVR
+        || installdir.starts_with("Proton")
+        || installdir.starts_with("SteamLinuxRuntime")
+        || installdir == "Steamworks Shared"
+}
+
+/// Extract a game from an `appmanifest_*.acf`. Returns `None` for entries that
+/// aren't a fully-installed game: still downloading (StateFlags bit 2 unset) or
+/// Steam infrastructure. `installdir` and the display `name` come straight from
+/// the manifest.
 pub fn parse_app_manifest(acf: &str) -> Option<SteamGame> {
     let root = parse(acf)?;
     let state = root.get("AppState")?;
     let appid = state.get("appid").and_then(Kv::as_str)?.parse().ok()?;
+    // StateFlags bit 2 (value 4) = fully installed. Skip anything still
+    // downloading so half-present titles don't list.
+    let flags: u32 = state
+        .get("StateFlags")
+        .and_then(Kv::as_str)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if flags & 4 == 0 {
+        return None;
+    }
     let installdir = state.get("installdir").and_then(Kv::as_str)?.to_string();
-    // Prefer the .acf's own display name; fall back to the install dir.
+    if is_non_game_app(appid, &installdir) {
+        return None;
+    }
+    // Prefer the .acf's own display name; fall back to the install dir when the
+    // name is missing or blank (an empty value is treated as absent).
     let name = state
         .get("name")
         .and_then(Kv::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| installdir.clone());
     Some(SteamGame {
@@ -405,6 +435,59 @@ mod tests {
                 name: "Half-Life 2".into(),
             }
         );
+    }
+
+    #[test]
+    fn skips_non_game_and_downloading_apps() {
+        // Steam infrastructure (redistributables bundle) is not a game.
+        let redist = r#"
+"AppState"
+{
+	"appid"		"228980"
+	"name"		"Steamworks Common Redistributables"
+	"StateFlags"		"4"
+	"installdir"		"Steamworks Shared"
+}
+"#;
+        assert_eq!(parse_app_manifest(redist), None);
+
+        // Fully-installed real game but by install dir (Proton prefix) is infra.
+        let proton = r#"
+"AppState"
+{
+	"appid"		"2348590"
+	"name"		"Proton 9.0"
+	"StateFlags"		"4"
+	"installdir"		"Proton 9.0 (Beta)"
+}
+"#;
+        assert_eq!(parse_app_manifest(proton), None);
+
+        // Still downloading (StateFlags bit 2 unset) — don't list it yet.
+        let downloading = r#"
+"AppState"
+{
+	"appid"		"400"
+	"name"		"Portal"
+	"StateFlags"		"1026"
+	"installdir"		"Portal"
+}
+"#;
+        assert_eq!(parse_app_manifest(downloading), None);
+    }
+
+    #[test]
+    fn empty_name_falls_back_to_installdir() {
+        let acf = r#"
+"AppState"
+{
+	"appid"		"620"
+	"name"		""
+	"StateFlags"		"4"
+	"installdir"		"Portal 2"
+}
+"#;
+        assert_eq!(parse_app_manifest(acf).unwrap().name, "Portal 2");
     }
 
     #[test]

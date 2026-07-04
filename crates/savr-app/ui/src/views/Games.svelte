@@ -61,7 +61,16 @@
     busyId = game.id;
     try {
       await backupNow(game.id);
-      notify.success(`Backup queued for ${game.title}.`);
+      // A game with no known save paths captures nothing (the daemon returns
+      // NoChange), so don't claim a backup was queued — tell the user how to
+      // teach Savrr where it saves.
+      if (game.save_targets.length === 0) {
+        notify.info(
+          `Savr doesn't know where ${game.title} saves yet — turn on Learn mode and play it once.`,
+        );
+      } else {
+        notify.success(`Backup queued for ${game.title}.`);
+      }
       if (selected?.id === game.id) await select(game);
     } catch (e) {
       notify.error(errorMessage(e));

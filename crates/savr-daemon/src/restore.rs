@@ -41,6 +41,15 @@ pub async fn run_restore(
         anyhow::bail!("refusing to restore {}: game is running", req.game_id);
     }
 
+    // No save targets means the anchor defaulted to $HOME (paths.rs): restoring
+    // would write and delete files directly under the home directory. Refuse.
+    if req.patterns.is_empty() && req.registry_keys.is_empty() {
+        anyhow::bail!(
+            "refusing to restore {}: no known save paths for this game",
+            req.game_id
+        );
+    }
+
     // 1. Pre-restore backup so the restore is undoable (PRD-03 §6 step 2).
     let pre = BackupJob {
         game_id: req.game_id,
