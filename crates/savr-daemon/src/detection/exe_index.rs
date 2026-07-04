@@ -179,6 +179,7 @@ fn is_executable(path: &Path, _meta: &std::fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)] // only the unix-gated test below constructs one
     use std::path::PathBuf;
     use uuid::Uuid;
 
