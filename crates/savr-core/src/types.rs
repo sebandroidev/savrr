@@ -67,7 +67,12 @@ impl SaveTag {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameSource {
+    /// Matched a Ludusavi manifest entry — we know where the saves live.
     Manifest,
+    /// Installed Steam game with no manifest match yet; detectable by its
+    /// executables, save paths learned on first play.
+    Steam,
+    /// User-added by hand.
     Custom,
 }
 

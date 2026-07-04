@@ -61,6 +61,12 @@ pub async fn run_backup(
     job: &BackupJob,
     blob_cache: &Path,
 ) -> anyhow::Result<BackupOutcome> {
+    // Nothing to capture — e.g. a Steam game we list and detect but whose save
+    // paths aren't known yet (no manifest match, not learned). Skip rather than
+    // create an empty version.
+    if job.patterns.is_empty() && job.registry_keys.is_empty() {
+        return Ok(BackupOutcome::NoChange);
+    }
     let new_snapshot = Snapshot::build(job.game_id, &job.patterns, &job.anchor)?;
     let last = state.get_snapshot(job.game_id).await?;
     let parent = last.as_ref().and_then(|s| s.local_head);

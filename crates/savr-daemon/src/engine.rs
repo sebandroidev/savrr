@@ -176,26 +176,37 @@ impl Engine {
 
         for lib in &steam_libs {
             for sg in &lib.games {
-                let Some((title, entry)) = by_appid.get(&sg.appid) else {
-                    continue;
-                };
+                // A manifest match enriches the game with a real title and known
+                // save paths. Without one we still list the game from its Steam
+                // install and detect it by its executables; its save paths get
+                // learned on first play instead of being a reason to hide it.
+                let manifest_match = by_appid.get(&sg.appid);
+                let title = manifest_match
+                    .map(|(t, _)| (*t).clone())
+                    .unwrap_or_else(|| sg.name.clone());
+
                 // Respect a per-game ignore.
                 if self
                     .config
                     .games
-                    .get(*title)
+                    .get(title.as_str())
                     .map(|g| g.ignore)
                     .unwrap_or(false)
                 {
                     continue;
                 }
-                let game_id = self.game_id_for(sg.appid, title, authed).await?;
+
+                let game_id = self.game_id_for(sg.appid, &title, authed).await;
+                let (source, save_targets) = match manifest_match {
+                    Some((_, entry)) => (GameSource::Manifest, entry.save_targets()),
+                    None => (GameSource::Steam, Vec::new()),
+                };
                 let game = Game {
                     id: game_id,
-                    title: (*title).clone(),
-                    source: GameSource::Manifest,
+                    title,
+                    source,
                     steam_appid: Some(sg.appid),
-                    save_targets: entry.save_targets(),
+                    save_targets,
                 };
                 let resolved = resolve_game(&game, &overrides, &ctx);
                 index.index_install_dir(&lib.install_path(sg), game_id);
@@ -222,27 +233,43 @@ impl Engine {
         Ok(libs)
     }
 
-    /// Stable game id for a Steam appid: the server's id when paired, else a
-    /// locally-minted id persisted so it's stable across restarts.
+    /// Stable game id for a Steam appid. When paired, prefer the server's
+    /// canonical id so multiple devices agree on one id per game — but NEVER let
+    /// a server hiccup (unreachable, token not ready at startup) fail the whole
+    /// catalog refresh. On any failure, fall back to a cached or freshly-minted
+    /// local id so the games always list. Infallible by design.
     ///
-    /// ponytail: a game first seen offline gets a local id; once paired, the
-    /// server id supersedes it. Reconciling an already-uploaded local id with
-    /// the server id is a follow-up (out of scope for M-daemon).
-    async fn game_id_for(&self, appid: u32, title: &str, authed: bool) -> anyhow::Result<GameId> {
+    /// ponytail: a game first seen offline keeps a local id; reconciling an
+    /// already-uploaded local id with the server id is a follow-up.
+    async fn game_id_for(&self, appid: u32, title: &str, authed: bool) -> GameId {
         let key = format!("gameid:steam:{appid}");
+        let cached = self
+            .state
+            .get_meta(&key)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| uuid::Uuid::parse_str(&s).ok());
+
         if authed {
-            let ensured = self.client.ensure_game(title, Some(appid)).await?;
-            self.state.set_meta(&key, &ensured.id.to_string()).await?;
-            return Ok(ensured.id);
-        }
-        if let Some(existing) = self.state.get_meta(&key).await? {
-            if let Ok(id) = uuid::Uuid::parse_str(&existing) {
-                return Ok(id);
+            match self.client.ensure_game(title, Some(appid)).await {
+                Ok(ensured) => {
+                    if cached != Some(ensured.id) {
+                        let _ = self.state.set_meta(&key, &ensured.id.to_string()).await;
+                    }
+                    return ensured.id;
+                }
+                Err(e) => {
+                    tracing::warn!("ensure_game failed for {title} ({e}); using a local id for now")
+                }
             }
         }
+        if let Some(id) = cached {
+            return id;
+        }
         let id = uuid::Uuid::now_v7();
-        self.state.set_meta(&key, &id.to_string()).await?;
-        Ok(id)
+        let _ = self.state.set_meta(&key, &id.to_string()).await;
+        id
     }
 
     // ---- IPC request dispatch (PRD-05 §4) ----

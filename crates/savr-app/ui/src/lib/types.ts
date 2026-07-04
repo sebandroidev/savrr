@@ -6,7 +6,7 @@ export type IsoDateTime = string;
 
 export type Os = "windows" | "linux" | "macos";
 export type SaveTag = "save" | "config";
-export type GameSource = "manifest" | "custom";
+export type GameSource = "Manifest" | "Steam" | "Custom";
 export type VersionKind = "full" | "differential";
 export type RootKind = "steam" | "drive" | "emulator" | "launcher";
 export type ResolveChoice = "keep_mine" | "keep_theirs" | "keep_both";

@@ -11,6 +11,10 @@ use std::path::{Path, PathBuf};
 pub struct SteamGame {
     pub appid: u32,
     pub installdir: String,
+    /// Human-readable title from the `.acf` `name` field. Lets us list and
+    /// detect a game without a Ludusavi manifest match; falls back to the
+    /// install dir name if the manifest omits it.
+    pub name: String,
 }
 
 /// A Steam library folder and the games installed under it.
@@ -246,7 +250,17 @@ pub fn parse_app_manifest(acf: &str) -> Option<SteamGame> {
     let state = root.get("AppState")?;
     let appid = state.get("appid").and_then(Kv::as_str)?.parse().ok()?;
     let installdir = state.get("installdir").and_then(Kv::as_str)?.to_string();
-    Some(SteamGame { appid, installdir })
+    // Prefer the .acf's own display name; fall back to the install dir.
+    let name = state
+        .get("name")
+        .and_then(Kv::as_str)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| installdir.clone());
+    Some(SteamGame {
+        appid,
+        installdir,
+        name,
+    })
 }
 
 /// Discover Steam libraries under a Steam root by reading its
@@ -387,7 +401,8 @@ mod tests {
             game,
             SteamGame {
                 appid: 220,
-                installdir: "Half-Life 2".into()
+                installdir: "Half-Life 2".into(),
+                name: "Half-Life 2".into(),
             }
         );
     }
@@ -401,6 +416,7 @@ mod tests {
         let game = SteamGame {
             appid: 220,
             installdir: "Half-Life 2".into(),
+            name: "Half-Life 2".into(),
         };
         assert_eq!(
             lib.install_path(&game),
