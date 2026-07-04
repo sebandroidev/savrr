@@ -249,10 +249,24 @@ pub fn parse_library_paths(vdf: &str) -> Vec<PathBuf> {
 /// none have saves, and indexing their wrapper binaries pollutes the exe index
 /// with false detection hits. Reject the known ones by appid or install dir.
 fn is_non_game_app(appid: u32, installdir: &str) -> bool {
-    matches!(appid, 228980 | 250820) // Steamworks Common Redistributables, SteamVR
-        || installdir.starts_with("Proton")
-        || installdir.starts_with("SteamLinuxRuntime")
+    // By appid: Steamworks Common Redistributables, SteamVR.
+    if matches!(appid, 228980 | 250820) {
+        return true;
+    }
+    // Match Valve's Proton and Linux-runtime tools by their own naming
+    // ("Proton 9.0 (Beta)", "Proton - Experimental", "Proton Hotfix",
+    // "Proton EasyAntiCheat Runtime", "SteamLinuxRuntime_sniper") without
+    // swallowing a real game that merely starts with the word, e.g. the VR title
+    // "Proton Pulse Plus".
+    installdir.starts_with("SteamLinuxRuntime")
         || installdir == "Steamworks Shared"
+        || installdir == "Proton Hotfix"
+        || installdir == "Proton Next"
+        || installdir.starts_with("Proton - ")
+        || installdir.starts_with("Proton EasyAntiCheat")
+        || installdir
+            .strip_prefix("Proton ")
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
 }
 
 /// Extract a game from an `appmanifest_*.acf`. Returns `None` for entries that
@@ -474,6 +488,22 @@ mod tests {
 }
 "#;
         assert_eq!(parse_app_manifest(downloading), None);
+
+        // A real game whose name merely starts with "Proton" must NOT be filtered.
+        let pulse = r#"
+"AppState"
+{
+	"appid"		"401810"
+	"name"		"Proton Pulse Plus"
+	"StateFlags"		"4"
+	"installdir"		"Proton Pulse Plus"
+}
+"#;
+        assert_eq!(
+            parse_app_manifest(pulse).map(|g| g.appid),
+            Some(401810),
+            "a game starting with 'Proton' is not a Proton runtime"
+        );
     }
 
     #[test]
