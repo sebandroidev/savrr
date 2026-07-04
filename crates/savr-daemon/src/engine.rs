@@ -1,0 +1,669 @@
+//! The engine: the daemon's brain. Owns local state, the server client, the
+//! resolved games catalog, and the exe index; dispatches every `GuiRequest`
+//! (PRD-05 §4) and drives event-triggered backups (PRD-03 §2).
+
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+
+use tokio::sync::{broadcast, RwLock};
+
+use savr_core::ipc::{
+    DaemonMsg, DaemonStatus, DetectionEvent, GuiRequest, ResolveChoice, RootKind, RootSpec,
+};
+use savr_core::manifest::{Manifest, Roots};
+use savr_core::protocol::ResolveRequest;
+use savr_core::types::Os;
+use savr_core::{DeviceId, Game, GameId, GameSource, SyncedConfig, VersionId};
+
+use crate::backup::{run_backup, BackupJob, BackupOutcome};
+use crate::client::ServerClient;
+use crate::config::DaemonConfig;
+use crate::detection::steam::{self, SteamLibrary};
+use crate::detection::{ExeIndex, SharedExeIndex};
+use crate::paths::{resolve_game, ResolveContext, ResolvedGame};
+use crate::restore::{run_restore, RestoreRequest};
+use crate::secrets::SecretStore;
+use crate::state::LocalState;
+
+/// A game known to the daemon, with its resolved save locations.
+#[derive(Clone)]
+pub struct GameEntry {
+    pub game: Game,
+    pub resolved: ResolvedGame,
+}
+
+impl GameEntry {
+    fn backup_job(&self) -> BackupJob {
+        BackupJob {
+            game_id: self.game.id,
+            patterns: self.resolved.patterns.clone(),
+            anchor: self.resolved.anchor.clone(),
+            registry_keys: self.resolved.registry_keys.clone(),
+        }
+    }
+}
+
+/// The two divergent tips of an unresolved conflict (PRD-03 §4).
+#[derive(Clone, Copy)]
+struct ConflictTips {
+    mine: VersionId,
+    theirs: VersionId,
+}
+
+pub struct Engine {
+    pub config: DaemonConfig,
+    pub state: LocalState,
+    client: Arc<ServerClient>,
+    secret_store: Arc<dyn SecretStore>,
+    events: broadcast::Sender<DetectionEvent>,
+    exe_index: SharedExeIndex,
+    manifest: RwLock<Manifest>,
+    games: RwLock<HashMap<GameId, GameEntry>>,
+    conflicts: RwLock<HashMap<GameId, ConflictTips>>,
+    running: RwLock<HashSet<GameId>>,
+    learn_mode: RwLock<Option<GameId>>,
+    server_connected: Arc<AtomicBool>,
+    device_id: RwLock<Option<DeviceId>>,
+    started_at: Instant,
+    blob_cache: PathBuf,
+    scratch: PathBuf,
+}
+
+impl Engine {
+    pub async fn new(
+        config: DaemonConfig,
+        state: LocalState,
+        secret_store: Arc<dyn SecretStore>,
+        events: broadcast::Sender<DetectionEvent>,
+    ) -> anyhow::Result<Arc<Self>> {
+        let client = Arc::new(ServerClient::new(&config.server_url)?);
+        let mut device_id = None;
+
+        // Seed the client from a stored credential (PRD-06 §3).
+        if let Some(creds) = secret_store.load()? {
+            device_id = Some(creds.device_id);
+            client.set_credentials(creds.clone()).await;
+            // M1 bridge: the current server accepts the raw account UUID as the
+            // bearer (see integration notes). Once JWT lands, `refresh()`
+            // replaces this on the first 401.
+            client.set_access_token(creds.account_id.to_string()).await;
+        }
+
+        let data = crate::config::data_root();
+        let engine = Arc::new(Self {
+            config,
+            state,
+            client,
+            secret_store,
+            events,
+            exe_index: Arc::new(RwLock::new(ExeIndex::new())),
+            manifest: RwLock::new(Manifest::new()),
+            games: RwLock::new(HashMap::new()),
+            conflicts: RwLock::new(HashMap::new()),
+            running: RwLock::new(HashSet::new()),
+            learn_mode: RwLock::new(None),
+            server_connected: Arc::new(AtomicBool::new(false)),
+            device_id: RwLock::new(device_id),
+            started_at: Instant::now(),
+            blob_cache: data.join("blob_cache"),
+            scratch: data.join("scratch"),
+        });
+        Ok(engine)
+    }
+
+    pub fn events(&self) -> broadcast::Sender<DetectionEvent> {
+        self.events.clone()
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<DetectionEvent> {
+        self.events.subscribe()
+    }
+
+    pub fn exe_index(&self) -> SharedExeIndex {
+        self.exe_index.clone()
+    }
+
+    pub fn client(&self) -> Arc<ServerClient> {
+        self.client.clone()
+    }
+
+    pub fn server_connected_flag(&self) -> Arc<AtomicBool> {
+        self.server_connected.clone()
+    }
+
+    pub async fn device_id(&self) -> Option<DeviceId> {
+        *self.device_id.read().await
+    }
+
+    /// Swap in a freshly-fetched manifest (startup + daily refresh).
+    pub async fn set_manifest(&self, manifest: Manifest) {
+        *self.manifest.write().await = manifest;
+    }
+
+    /// Rebuild the games catalog + exe index from registered Steam roots and
+    /// the manifest (PRD-02 §1, §3.2). Idempotent; safe to call on any change.
+    pub async fn refresh_games(&self) -> anyhow::Result<()> {
+        let steam_libs = self.discover_steam_libraries().await?;
+        let manifest = self.manifest.read().await;
+
+        // Index manifest entries by their Steam appid for quick matching.
+        let mut by_appid: HashMap<u32, (&String, savr_core::manifest::ManifestEntry)> =
+            HashMap::new();
+        for (title, entry) in manifest.iter() {
+            if let Some(steam) = entry.steam {
+                by_appid.insert(steam.id, (title, entry.clone()));
+            }
+        }
+
+        let roots = Roots::current();
+        let ctx = ResolveContext {
+            roots: &roots,
+            steam_libs: &steam_libs,
+        };
+        let overrides = self
+            .state
+            .synced_config()
+            .await?
+            .map(|c| c.overrides)
+            .unwrap_or_default();
+        let authed = self.client.is_authenticated().await;
+
+        let mut games = HashMap::new();
+        let mut index = ExeIndex::new();
+
+        for lib in &steam_libs {
+            for sg in &lib.games {
+                let Some((title, entry)) = by_appid.get(&sg.appid) else {
+                    continue;
+                };
+                // Respect a per-game ignore.
+                if self
+                    .config
+                    .games
+                    .get(*title)
+                    .map(|g| g.ignore)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let game_id = self.game_id_for(sg.appid, title, authed).await?;
+                let game = Game {
+                    id: game_id,
+                    title: (*title).clone(),
+                    source: GameSource::Manifest,
+                    steam_appid: Some(sg.appid),
+                    save_targets: entry.save_targets(),
+                };
+                let resolved = resolve_game(&game, &overrides, &ctx);
+                index.index_install_dir(&lib.install_path(sg), game_id);
+                games.insert(game_id, GameEntry { game, resolved });
+            }
+        }
+
+        let n = games.len();
+        *self.games.write().await = games;
+        // Persist + hot-swap the exe index (PRD-05 §3).
+        self.state.replace_exe_index(&index.to_rows()).await?;
+        *self.exe_index.write().await = index;
+        tracing::info!("catalog refreshed: {n} watched games");
+        Ok(())
+    }
+
+    async fn discover_steam_libraries(&self) -> anyhow::Result<Vec<SteamLibrary>> {
+        let mut libs = Vec::new();
+        for root in self.state.list_roots().await? {
+            if root.kind == RootKind::Steam {
+                libs.extend(steam::discover_libraries(std::path::Path::new(&root.path)));
+            }
+        }
+        Ok(libs)
+    }
+
+    /// Stable game id for a Steam appid: the server's id when paired, else a
+    /// locally-minted id persisted so it's stable across restarts.
+    ///
+    /// ponytail: a game first seen offline gets a local id; once paired, the
+    /// server id supersedes it. Reconciling an already-uploaded local id with
+    /// the server id is a follow-up (out of scope for M-daemon).
+    async fn game_id_for(&self, appid: u32, title: &str, authed: bool) -> anyhow::Result<GameId> {
+        let key = format!("gameid:steam:{appid}");
+        if authed {
+            let ensured = self.client.ensure_game(title, Some(appid)).await?;
+            self.state.set_meta(&key, &ensured.id.to_string()).await?;
+            return Ok(ensured.id);
+        }
+        if let Some(existing) = self.state.get_meta(&key).await? {
+            if let Ok(id) = uuid::Uuid::parse_str(&existing) {
+                return Ok(id);
+            }
+        }
+        let id = uuid::Uuid::now_v7();
+        self.state.set_meta(&key, &id.to_string()).await?;
+        Ok(id)
+    }
+
+    // ---- IPC request dispatch (PRD-05 §4) ----
+
+    pub async fn handle_request(&self, req: GuiRequest) -> DaemonMsg {
+        match req {
+            GuiRequest::ListGames => {
+                let games = self.games.read().await;
+                DaemonMsg::Games(games.values().map(|e| e.game.clone()).collect())
+            }
+            GuiRequest::ListRoots => match self.state.list_roots().await {
+                Ok(roots) => DaemonMsg::Roots(roots),
+                Err(e) => err(e),
+            },
+            GuiRequest::AddRoot(spec) => self.add_root(spec).await,
+            GuiRequest::RemoveRoot { id } => match self.state.remove_root(id).await {
+                Ok(()) => {
+                    let _ = self.refresh_games().await;
+                    DaemonMsg::Ok
+                }
+                Err(e) => err(e),
+            },
+            GuiRequest::BackupNow { game_id } => self.backup_now(game_id).await,
+            GuiRequest::ListVersions { game_id } => {
+                match self.client.list_versions(game_id).await {
+                    Ok(versions) => DaemonMsg::Versions(versions),
+                    Err(e) => err(e),
+                }
+            }
+            GuiRequest::Restore {
+                game_id,
+                version_id,
+            } => self.restore(game_id, version_id).await,
+            GuiRequest::ResolveConflict { game_id, choice } => {
+                self.resolve_conflict(game_id, choice).await
+            }
+            GuiRequest::GetStatus => self.status().await,
+            GuiRequest::GetConfig => {
+                let cfg = self
+                    .state
+                    .synced_config()
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                DaemonMsg::Config(Box::new(cfg))
+            }
+            GuiRequest::UpdateConfig(cfg) => self.update_config(*cfg).await,
+            GuiRequest::EnterLearnMode { game_id } => {
+                *self.learn_mode.write().await = Some(game_id);
+                // ponytail: learn-mode currently just records intent; capturing
+                // the exe on next launch (PRD-02 §3.3) is a follow-up.
+                DaemonMsg::Ok
+            }
+            GuiRequest::PairDevice {
+                server_url,
+                code,
+                device_name,
+            } => self.pair(&server_url, &code, &device_name).await,
+        }
+    }
+
+    async fn add_root(&self, spec: RootSpec) -> DaemonMsg {
+        match self.state.add_root(spec.kind, &spec.path).await {
+            Ok(_) => {
+                let _ = self.refresh_games().await;
+                DaemonMsg::Ok
+            }
+            Err(e) => err(e),
+        }
+    }
+
+    async fn backup_now(&self, game_id: GameId) -> DaemonMsg {
+        let Some(entry) = self.games.read().await.get(&game_id).cloned() else {
+            return DaemonMsg::Error {
+                message: format!("unknown game {game_id}"),
+            };
+        };
+        let device_id = self.device_id().await.unwrap_or_else(uuid::Uuid::nil);
+        match run_backup(
+            &self.state,
+            Some(&self.client),
+            device_id,
+            self.config.full_every,
+            &entry.backup_job(),
+            &self.blob_cache,
+        )
+        .await
+        {
+            Ok(BackupOutcome::Conflict { head, incoming }) => {
+                self.record_conflict(game_id, head.as_ref().map(|h| h.id), incoming.id)
+                    .await
+            }
+            Ok(_) => DaemonMsg::Ok,
+            Err(e) => err(e),
+        }
+    }
+
+    async fn restore(&self, game_id: GameId, version_id: VersionId) -> DaemonMsg {
+        let Some(entry) = self.games.read().await.get(&game_id).cloned() else {
+            return DaemonMsg::Error {
+                message: format!("unknown game {game_id}"),
+            };
+        };
+        let running = self.running.read().await.contains(&game_id);
+        let device_id = self.device_id().await.unwrap_or_else(uuid::Uuid::nil);
+        let req = RestoreRequest {
+            game_id,
+            version_id,
+            anchor: entry.resolved.anchor.clone(),
+            patterns: entry.resolved.patterns.clone(),
+            registry_keys: entry.resolved.registry_keys.clone(),
+        };
+        match run_restore(
+            &self.state,
+            &self.client,
+            device_id,
+            &req,
+            running,
+            &self.blob_cache,
+            &self.scratch,
+        )
+        .await
+        {
+            Ok(()) => DaemonMsg::Ok,
+            Err(e) => err(e),
+        }
+    }
+
+    async fn resolve_conflict(&self, game_id: GameId, choice: ResolveChoice) -> DaemonMsg {
+        let Some(tips) = self.conflicts.read().await.get(&game_id).copied() else {
+            return DaemonMsg::Error {
+                message: format!("no pending conflict for {game_id}"),
+            };
+        };
+        let (winner, keep_both) = match choice {
+            ResolveChoice::KeepMine => (tips.mine, false),
+            ResolveChoice::KeepTheirs => (tips.theirs, false),
+            ResolveChoice::KeepBoth => (tips.mine, true),
+        };
+        match self
+            .client
+            .resolve_conflict(game_id, &ResolveRequest { winner, keep_both })
+            .await
+        {
+            Ok(()) => {
+                self.conflicts.write().await.remove(&game_id);
+                DaemonMsg::Ok
+            }
+            Err(e) => err(e),
+        }
+    }
+
+    async fn update_config(&self, cfg: SyncedConfig) -> DaemonMsg {
+        if let Err(e) = self.state.set_synced_config(&cfg).await {
+            return err(e);
+        }
+        // Best-effort push to the server. On success, adopt the config the
+        // server returns so our local `tag` matches the server's new one; if we
+        // kept the old tag, the next edit would send a stale tag and be rejected
+        // with a 409 and config would silently stop syncing.
+        if self.client.is_authenticated().await {
+            match self.client.put_config(&cfg).await {
+                Ok(updated) => {
+                    if let Err(e) = self.state.set_synced_config(&updated).await {
+                        return err(e);
+                    }
+                }
+                Err(e) => tracing::warn!("config push failed (kept locally): {e}"),
+            }
+        }
+        let _ = self.refresh_games().await;
+        DaemonMsg::Ok
+    }
+
+    async fn pair(&self, server_url: &str, code: &str, device_name: &str) -> DaemonMsg {
+        let client = match ServerClient::new(server_url) {
+            Ok(c) => c,
+            Err(e) => return err(e),
+        };
+        match client.pair(code, device_name, Os::current()).await {
+            Ok(paired) => {
+                let creds = crate::secrets::Credentials {
+                    device_id: paired.device_id,
+                    account_id: paired.account_id,
+                    refresh_secret: paired.refresh_secret,
+                };
+                if let Err(e) = self.secret_store.store(&creds) {
+                    return err(e);
+                }
+                let _ = self.state.set_meta("server_url", server_url).await;
+                *self.device_id.write().await = Some(paired.device_id);
+                // Make the running client usable immediately (assumes the same
+                // server_url; a different one is picked up on next restart).
+                self.client.set_credentials(creds).await;
+                self.client
+                    .set_access_token(paired.access_token.clone())
+                    .await;
+                DaemonMsg::Paired {
+                    device_id: paired.device_id,
+                }
+            }
+            Err(e) => err(e),
+        }
+    }
+
+    async fn status(&self) -> DaemonMsg {
+        let pending_outbox = self.state.outbox_count().await.unwrap_or(0);
+        let last_backup_at = self.state.last_backup_at().await.ok().flatten();
+        DaemonMsg::Status(DaemonStatus {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            uptime_s: self.started_at.elapsed().as_secs(),
+            rss_bytes: current_rss(),
+            watched_games: self.games.read().await.len() as u32,
+            server_connected: self.server_connected.load(Ordering::Relaxed)
+                || self.client.is_authenticated().await,
+            last_backup_at,
+            pending_outbox,
+        })
+    }
+
+    /// Record a conflict for later resolution and surface it to the GUI.
+    async fn record_conflict(
+        &self,
+        game_id: GameId,
+        theirs: Option<VersionId>,
+        mine: VersionId,
+    ) -> DaemonMsg {
+        let theirs = theirs.unwrap_or(mine);
+        self.conflicts
+            .write()
+            .await
+            .insert(game_id, ConflictTips { mine, theirs });
+        DaemonMsg::ConflictRaised {
+            game_id,
+            tips: vec![theirs, mine],
+        }
+    }
+
+    // ---- event-driven backups (PRD-03 §2) ----
+
+    /// Consume detection events: track running games and trigger backups on
+    /// `GameStopped` / `ManualBackupRequested`. Runs until `shutdown` flips.
+    pub async fn run_event_loop(self: Arc<Self>, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+        let mut rx = self.subscribe();
+        loop {
+            tokio::select! {
+                res = shutdown.changed() => {
+                    if res.is_err() || *shutdown.borrow() { return; }
+                }
+                msg = rx.recv() => {
+                    match msg {
+                        Ok(event) => self.on_event(event).await,
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!("event loop lagged, dropped {n} events");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return,
+                    }
+                }
+            }
+        }
+    }
+
+    async fn on_event(&self, event: DetectionEvent) {
+        match event {
+            DetectionEvent::GameStarted { game_id, .. } => {
+                self.running.write().await.insert(game_id);
+            }
+            DetectionEvent::GameStopped { game_id, .. } => {
+                self.running.write().await.remove(&game_id);
+                self.trigger_backup(game_id).await;
+            }
+            DetectionEvent::ManualBackupRequested { game_id } => {
+                self.trigger_backup(game_id).await;
+            }
+            DetectionEvent::SaveDirChanged { .. } => {
+                // Live mid-session backup is off by default (PRD-02 §5, G5).
+            }
+        }
+    }
+
+    async fn trigger_backup(&self, game_id: GameId) {
+        let Some(entry) = self.games.read().await.get(&game_id).cloned() else {
+            return;
+        };
+        let device_id = self.device_id().await.unwrap_or_else(uuid::Uuid::nil);
+        match run_backup(
+            &self.state,
+            Some(&self.client),
+            device_id,
+            self.config.full_every,
+            &entry.backup_job(),
+            &self.blob_cache,
+        )
+        .await
+        {
+            Ok(BackupOutcome::Uploaded { version }) => {
+                crate::notify::toast("Save backed up", &entry.game.title).await;
+                tracing::info!("backed up {} -> version {}", entry.game.title, version.id);
+            }
+            Ok(BackupOutcome::Conflict { head, incoming }) => {
+                let _ = self
+                    .record_conflict(game_id, head.as_ref().map(|h| h.id), incoming.id)
+                    .await;
+                crate::notify::toast("Sync conflict", &entry.game.title).await;
+            }
+            Ok(BackupOutcome::Queued) => {
+                tracing::info!("{} queued for upload (offline)", entry.game.title);
+            }
+            Ok(BackupOutcome::NoChange) => {}
+            Err(e) => tracing::error!("backup of {} failed: {e}", entry.game.title),
+        }
+    }
+}
+
+impl Engine {
+    /// React to a server `version_available` push (PRD-03 §5). Auto-pulls when
+    /// policy allows and it's safe; otherwise notifies the user.
+    pub async fn on_version_available(&self, game_id: GameId, version_id: VersionId) {
+        let running = self.running.read().await.contains(&game_id);
+        let policy = self
+            .games
+            .read()
+            .await
+            .get(&game_id)
+            .and_then(|e| {
+                self.config
+                    .games
+                    .get(&e.game.title)
+                    .and_then(|g| g.autopull)
+            })
+            .unwrap_or(self.config.autopull);
+
+        match policy {
+            // auto: pull iff the game isn't running (PRD-03 §5). The
+            // local-unchanged guard is enforced inside restore's pre-backup.
+            savr_core::AutoPullPolicy::Auto if !running => {
+                if let DaemonMsg::Error { message } = self.restore(game_id, version_id).await {
+                    tracing::warn!("auto-pull restore failed: {message}");
+                }
+            }
+            _ => {
+                let title = self
+                    .games
+                    .read()
+                    .await
+                    .get(&game_id)
+                    .map(|e| e.game.title.clone())
+                    .unwrap_or_else(|| game_id.to_string());
+                crate::notify::toast("New save available", &title).await;
+            }
+        }
+    }
+
+    /// Record a conflict pushed over WebSocket (PRD-04 §4).
+    pub async fn record_ws_conflict(&self, game_id: GameId, tips: Vec<VersionId>) {
+        if let (Some(&theirs), Some(&mine)) = (tips.first(), tips.get(1)) {
+            self.conflicts
+                .write()
+                .await
+                .insert(game_id, ConflictTips { mine, theirs });
+        }
+        crate::notify::toast("Sync conflict", &game_id.to_string()).await;
+    }
+
+    /// Retry any queued uploads against the server (PRD-03 §8).
+    pub async fn flush_outbox(&self) {
+        if let Err(e) =
+            crate::backup::retry_outbox(&self.state, &self.client, &self.blob_cache).await
+        {
+            tracing::warn!("outbox flush error: {e}");
+        }
+    }
+
+    /// Register the OS's default Steam roots if the user has none yet
+    /// (first-boot convenience, PRD-07 §4).
+    pub async fn ensure_default_roots(&self) -> anyhow::Result<()> {
+        if !self.state.list_roots().await?.is_empty() {
+            return Ok(());
+        }
+        for root in steam::default_steam_roots() {
+            self.state
+                .add_root(RootKind::Steam, &root.to_string_lossy())
+                .await?;
+            tracing::info!("registered default Steam root {}", root.display());
+        }
+        Ok(())
+    }
+
+    /// Pull the synced config after a `config_updated` push (PRD-04 §4).
+    pub async fn pull_config(&self) -> anyhow::Result<()> {
+        if !self.client.is_authenticated().await {
+            return Ok(());
+        }
+        let cfg = self.client.get_config().await?;
+        self.state.set_synced_config(&cfg).await?;
+        self.refresh_games().await?;
+        Ok(())
+    }
+}
+
+fn err(e: impl std::fmt::Display) -> DaemonMsg {
+    DaemonMsg::Error {
+        message: e.to_string(),
+    }
+}
+
+/// Resident set size of this process, best-effort (0 if unavailable). Powers
+/// the GUI's "prove it's tiny" status (PRD-07 §6, G5).
+fn current_rss() -> u64 {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let Ok(pid) = sysinfo::get_current_pid() else {
+        return 0;
+    };
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_memory(),
+    );
+    sys.process(Pid::from(pid.as_u32() as usize))
+        .map(|p| p.memory())
+        .unwrap_or(0)
+}

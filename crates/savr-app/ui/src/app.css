@@ -1,0 +1,268 @@
+/* Savr design system — dark-first, one small set of tokens.
+   Light theme is a documented override; the app ships dark by default. */
+
+:root {
+  color-scheme: dark;
+
+  /* surfaces */
+  --bg: #0e1116;
+  --bg-elev: #161b22;
+  --panel: #1b212b;
+  --panel-2: #212936;
+  --border: #2a323f;
+  --border-strong: #3a4453;
+
+  /* text */
+  --text: #e6edf3;
+  --text-muted: #9aa7b6;
+  --text-dim: #6b7787;
+
+  /* brand + semantic */
+  --accent: #4f9dff;
+  --accent-strong: #2f7fe6;
+  --accent-soft: rgba(79, 157, 255, 0.14);
+  --good: #3fb950;
+  --good-soft: rgba(63, 185, 80, 0.14);
+  --warn: #d29922;
+  --warn-soft: rgba(210, 153, 34, 0.15);
+  --bad: #f85149;
+  --bad-soft: rgba(248, 81, 73, 0.14);
+
+  --radius: 10px;
+  --radius-sm: 7px;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f7fa;
+  --bg-elev: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f0f3f7;
+  --border: #dce2ea;
+  --border-strong: #c4ccd6;
+  --text: #1a2029;
+  --text-muted: #59636f;
+  --text-dim: #8a95a1;
+  --accent: #2f7fe6;
+  --accent-strong: #2069c9;
+  --accent-soft: rgba(47, 127, 230, 0.1);
+  --good-soft: rgba(45, 164, 78, 0.12);
+  --warn-soft: rgba(191, 135, 0, 0.14);
+  --bad-soft: rgba(209, 36, 47, 0.1);
+  --shadow: 0 6px 20px rgba(20, 30, 45, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+#app {
+  height: 100vh;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.86em;
+}
+
+/* ---- buttons ---- */
+button {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 13px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    opacity 0.12s ease;
+}
+button:hover:not(:disabled) {
+  background: var(--panel);
+  border-color: var(--border-strong);
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+button.danger {
+  color: var(--bad);
+  border-color: var(--border);
+}
+button.danger:hover:not(:disabled) {
+  background: var(--bad-soft);
+  border-color: var(--bad);
+}
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+button.ghost:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+button.sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+/* ---- form controls ---- */
+input,
+select {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 11px;
+  width: 100%;
+}
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+/* ---- cards / panels ---- */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+/* ---- badges ---- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--panel-2);
+}
+.badge.good {
+  color: var(--good);
+  background: var(--good-soft);
+  border-color: transparent;
+}
+.badge.warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: transparent;
+}
+.badge.bad {
+  color: var(--bad);
+  background: var(--bad-soft);
+  border-color: transparent;
+}
+.badge.accent {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.dot.good {
+  background: var(--good);
+  box-shadow: 0 0 0 3px var(--good-soft);
+}
+.dot.bad {
+  background: var(--bad);
+  box-shadow: 0 0 0 3px var(--bad-soft);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+.dim {
+  color: var(--text-dim);
+}
+
+/* scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

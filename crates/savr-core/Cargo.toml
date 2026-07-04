@@ -1,0 +1,30 @@
+[package]
+name = "savr-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+uuid.workspace = true
+blake3.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
+glob.workspace = true
+zstd.workspace = true
+tar.workspace = true
+# Not inherited from the workspace: savr-core only needs the async IO traits,
+# so it pins a slim tokio (feature unification still upgrades it when the
+# daemon/app pull `full` in a combined build).
+tokio = { version = "1", optional = true, default-features = false, features = ["io-util"] }
+
+[features]
+default = []
+# Length-prefixed async frame codec for daemon <-> GUI IPC.
+ipc = ["dep:tokio"]
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "io-util"] }

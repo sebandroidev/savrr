@@ -1,0 +1,31 @@
+# Rust
+/target
+**/target
+
+# Node / frontend
+**/node_modules
+**/dist
+
+# Tauri generated
+crates/savr-app/src-tauri/gen
+
+# Runtime data
+/data
+docker/data
+docker/.env
+
+# Savr archives + local db
+*.savr
+
+# Runtime manifest cache (fetched from the Ludusavi project at runtime)
+/manifests/*.yaml
+/manifests/*.etag
+
+# Local orchestration scratch (not part of the project)
+.savr-workflow-*.js
+
+.DS_Store
+
+# Original upload artifacts (PRDs now live in docs/prd/)
+/files(3)
+/files(3).zip

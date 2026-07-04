@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/savr-core",
+    "crates/savr-server",
+    "crates/savr-daemon",
+    "crates/savr-app/src-tauri",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+uuid = { version = "1", features = ["v7", "serde"] }
+blake3 = "1"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+dirs = "6"
+glob = "0.3"
+zstd = "0.13"
+tar = "0.4"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+

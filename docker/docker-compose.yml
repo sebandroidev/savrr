@@ -1,0 +1,28 @@
+# Zero-extra-services deployment: SQLite + filesystem blobs in one volume.
+# Swap in the published image instead of building:
+#   image: ghcr.io/sebandroidev/savrr-server:latest
+services:
+  savr:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: savrr-server:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      SAVR_DB_URL: "sqlite:///data/savr.db"
+      SAVR_BLOB_BACKEND: "fs"
+      SAVR_BLOB_PATH: "/data/blobs"
+      SAVR_BIND: "0.0.0.0:8080"
+      # Set once at first boot to bootstrap the owner account. Put it in a
+      # gitignored .env next to this file: SAVR_OWNER_PASSWORD=change-me
+      SAVR_OWNER_PASSWORD: "${SAVR_OWNER_PASSWORD:?set SAVR_OWNER_PASSWORD in docker/.env}"
+
+# No in-container healthcheck: the runtime image ships no curl/wget to stay
+# tiny. Probe GET /healthz from your reverse proxy or orchestrator instead.
+#
+# TLS: front this with Caddy/Traefik, or reach it over Tailscale/WireGuard
+# (recommended default for non-technical setups — see docs/prd/PRD-06 §4).

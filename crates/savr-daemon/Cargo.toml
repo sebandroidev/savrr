@@ -1,0 +1,73 @@
+[package]
+name = "savr-daemon"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "savr_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "savr-daemon"
+path = "src/main.rs"
+
+[features]
+default = []
+# The macOS/Windows system tray needs the platform main-thread event loop,
+# which fights a headless tokio service. Off by default so the daemon runs
+# truly headless; the GUI owns the tray. See src/tray.rs.
+tray = ["dep:tray-icon"]
+
+[dependencies]
+savr-core = { path = "../savr-core", features = ["ipc"] }
+
+# Inherited workspace deps (already declared, pinned centrally).
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+blake3 = { workspace = true }
+thiserror = { workspace = true }
+dirs = { workspace = true }
+glob = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+# Crate-local deps (concrete versions).
+anyhow = "1"
+toml = "0.8"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "stream",
+    "rustls-tls",
+] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = [
+    "connect",
+    "rustls-tls-webpki-roots",
+] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+] }
+sysinfo = "0.33"
+notify-rust = "4"
+interprocess = { version = "2", features = ["tokio"] }
+futures-util = "0.3"
+rand = "0.8"
+tray-icon = { version = "0.19", optional = true }
+
+# Per-platform keychain backend so a macOS build never pulls Linux D-Bus libs
+# and vice-versa (PRD-06 §3).
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
+[dev-dependencies]
+tempfile = "3"

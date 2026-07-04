@@ -1,0 +1,38 @@
+[package]
+name = "savr-app"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+# Standard Tauri 2 layout: a library that holds the whole app (so it can be
+# reused by the mobile entrypoints) plus a thin binary that calls `run()`.
+[lib]
+name = "savr_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2" }
+
+[dependencies]
+# app + daemon both need the length-prefixed IPC frame codec (feature = "ipc").
+savr-core = { path = "../../savr-core", features = ["ipc"] }
+
+tauri = { version = "2" }
+tauri-plugin-updater = "2"
+tauri-plugin-dialog = "2"
+# Needed so the updater flow can relaunch the app after installing.
+tauri-plugin-process = "2"
+
+# interprocess gives one abstraction over unix sockets / windows named pipes;
+# the "tokio" feature yields streams that impl tokio AsyncRead/AsyncWrite, which
+# is exactly what savr_core::ipc::{read_frame,write_frame} require.
+interprocess = { version = "2", features = ["tokio"] }
+
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
+tokio.workspace = true
+tracing.workspace = true
