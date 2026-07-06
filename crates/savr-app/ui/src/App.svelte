@@ -9,6 +9,7 @@
   import Settings from "./views/Settings.svelte";
   import Pairing from "./views/Pairing.svelte";
   import { checkForUpdates } from "./lib/updater";
+  import { getVersion } from "@tauri-apps/api/app";
 
   type ViewId = "dashboard" | "games" | "conflicts" | "roots" | "settings";
 
@@ -28,6 +29,7 @@
   let theme = $state<"dark" | "light">(
     (localStorage.getItem(THEME_KEY) as "dark" | "light") || "dark",
   );
+  let version = $state("");
 
   function applyTheme() {
     document.documentElement.setAttribute("data-theme", theme);
@@ -46,6 +48,9 @@
 
   onMount(() => {
     applyTheme();
+    getVersion()
+      .then((v) => (version = v))
+      .catch(() => {});
     // Auto-check for updates on launch (silent; install is user-confirmed).
     checkForUpdates({ silent: true });
   });
@@ -77,6 +82,7 @@
           <Icon name={theme === "dark" ? "sun" : "moon"} size={16} />
           <span>{theme === "dark" ? "Light" : "Dark"} theme</span>
         </button>
+        {#if version}<span class="version">v{version}</span>{/if}
       </div>
     </aside>
 
@@ -162,6 +168,13 @@
   }
   .foot {
     margin-top: auto;
+  }
+  .version {
+    display: block;
+    padding: 6px 11px 0;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
   }
   .subtle {
     color: var(--text-dim);
