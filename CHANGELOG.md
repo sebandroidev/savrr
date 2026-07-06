@@ -2,6 +2,18 @@
 
 Notable changes to Savrr. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions aim for [semantic versioning](https://semver.org/spec/v2.0.0.html) once past 1.0.
 
+## [0.1.5] - 2026-07-06
+
+Version history works again, and Savr shows its own version.
+
+### Fixed
+
+- Version history and backups failed after pairing with a "localhost:8080" error. Pairing stored where your server lives, but every restart the daemon went back to its built-in default and ignored it. It now uses your paired server on startup, so version history and backups reach the right place.
+
+### Added
+
+- Savr's own version is shown at the bottom of the sidebar, so you can tell at a glance which build you're on.
+
 ## [0.1.4] - 2026-07-06
 
 Your games show up right away.
@@ -61,6 +73,7 @@ The first working slice of the whole system: shared core, server, headless daemo
 
 - An adversarial code review before release fixed a device-revocation gap (a revoked device kept its WebSocket), an offline-differential backup inconsistency, a config-sync tag drop, and a device-state oracle on `/auth/refresh`. Remaining known issues are tracked in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
+[0.1.5]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.5
 [0.1.4]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.4
 [0.1.3]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.3
 [0.1.2]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.2
