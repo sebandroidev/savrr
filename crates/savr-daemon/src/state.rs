@@ -6,6 +6,7 @@
 //! Uses runtime `sqlx::query` (not the compile-time macros) so the build needs
 //! no live database or offline metadata — same choice the server made.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -45,6 +46,13 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS play_stats (
+    game_id           TEXT PRIMARY KEY,
+    session_start     TEXT,
+    last_played       TEXT,
+    last_session_secs INTEGER,
+    total_secs        INTEGER NOT NULL DEFAULT 0
+);
 "#;
 
 /// Last snapshot stored for a game, plus the version this device last synced.
@@ -53,6 +61,16 @@ pub struct StoredSnapshot {
     pub files: Vec<FileEntry>,
     pub taken_at: DateTime<Utc>,
     pub local_head: Option<VersionId>,
+}
+
+/// Per-game play tracking, derived from the daemon's `GameStarted`/`GameStopped`
+/// detection events. Exists to prove detection is firing even for games Savr
+/// can't back up yet (no known save location).
+#[derive(Debug, Clone, Default)]
+pub struct PlayStat {
+    pub last_played: Option<DateTime<Utc>>,
+    pub last_session_secs: Option<i64>,
+    pub total_secs: i64,
 }
 
 /// A queued upload awaiting a reachable server (PRD-03 §8).
@@ -342,6 +360,106 @@ impl LocalState {
         Ok(())
     }
 
+    // ---- play stats ----
+
+    /// Open a play session: stamp `last_played` and remember the start so the
+    /// matching stop can measure duration. Upsert so a game seen for the first
+    /// time gets a row.
+    pub async fn play_start(&self, game_id: GameId, at: DateTime<Utc>) -> anyhow::Result<()> {
+        let at = at.to_rfc3339();
+        sqlx::query(
+            "INSERT INTO play_stats (game_id, session_start, last_played, total_secs)
+             VALUES (?, ?, ?, 0)
+             ON CONFLICT(game_id) DO UPDATE SET session_start = excluded.session_start,
+                                                last_played   = excluded.last_played",
+        )
+        .bind(game_id.to_string())
+        .bind(&at)
+        .bind(&at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Close a play session: add its duration to the total and record it as the
+    /// last session. If no session was open (the daemon restarted mid-play) we
+    /// can't measure duration, so just refresh `last_played`.
+    pub async fn play_stop(&self, game_id: GameId, at: DateTime<Utc>) -> anyhow::Result<()> {
+        let row = sqlx::query("SELECT session_start FROM play_stats WHERE game_id = ?")
+            .bind(game_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        let start = row.and_then(|r| r.get::<Option<String>, _>("session_start"));
+        let ended = at.to_rfc3339();
+        match start.and_then(|s| DateTime::parse_from_rfc3339(&s).ok()) {
+            Some(started) => {
+                // Clamp: a backwards clock must never subtract from the total.
+                let secs = (at - started.with_timezone(&Utc)).num_seconds().max(0);
+                sqlx::query(
+                    "UPDATE play_stats
+                        SET session_start = NULL, last_played = ?,
+                            last_session_secs = ?, total_secs = total_secs + ?
+                      WHERE game_id = ?",
+                )
+                .bind(&ended)
+                .bind(secs)
+                .bind(secs)
+                .bind(game_id.to_string())
+                .execute(&self.pool)
+                .await?;
+            }
+            None => {
+                sqlx::query(
+                    "INSERT INTO play_stats (game_id, last_played, total_secs) VALUES (?, ?, 0)
+                     ON CONFLICT(game_id) DO UPDATE SET last_played = excluded.last_played",
+                )
+                .bind(game_id.to_string())
+                .bind(&ended)
+                .execute(&self.pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Clear any session left open by a daemon that died mid-play. The real stop
+    /// time went unobserved (the daemon wasn't running to see it), so no duration
+    /// can be credited — just drop the marker so a stale `session_start` doesn't
+    /// pin `last_played` to the start time until the game's next launch.
+    pub async fn close_orphaned_sessions(&self) -> anyhow::Result<()> {
+        sqlx::query("UPDATE play_stats SET session_start = NULL WHERE session_start IS NOT NULL")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// All play stats, keyed by game, for overlaying onto the games list.
+    pub async fn play_stats(&self) -> anyhow::Result<HashMap<GameId, PlayStat>> {
+        let rows =
+            sqlx::query("SELECT game_id, last_played, last_session_secs, total_secs FROM play_stats")
+                .fetch_all(&self.pool)
+                .await?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let Ok(id) = Uuid::parse_str(&row.get::<String, _>("game_id")) else {
+                continue;
+            };
+            let last_played = row
+                .get::<Option<String>, _>("last_played")
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|d| d.with_timezone(&Utc));
+            out.insert(
+                id,
+                PlayStat {
+                    last_played,
+                    last_session_secs: row.get::<Option<i64>, _>("last_session_secs"),
+                    total_secs: row.get::<i64, _>("total_secs"),
+                },
+            );
+        }
+        Ok(out)
+    }
+
     /// The synced account config, if the daemon has fetched/stored one.
     pub async fn synced_config(&self) -> anyhow::Result<Option<SyncedConfig>> {
         match self.get_meta("synced_config").await? {
@@ -442,5 +560,52 @@ mod tests {
         assert_eq!(due[0].payload, b"payload");
         state.remove_outbox(vid).await.unwrap();
         assert_eq!(state.outbox_count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn play_sessions_accumulate() {
+        use chrono::Duration;
+        let state = LocalState::open_memory().await.unwrap();
+        let gid = Uuid::now_v7();
+        let t0 = Utc::now();
+
+        // One 90s session records duration, total, and last_played.
+        state.play_start(gid, t0).await.unwrap();
+        state.play_stop(gid, t0 + Duration::seconds(90)).await.unwrap();
+        let s = state.play_stats().await.unwrap();
+        let p = s.get(&gid).unwrap();
+        assert_eq!(p.total_secs, 90);
+        assert_eq!(p.last_session_secs, Some(90));
+        assert!(p.last_played.is_some());
+
+        // A second 60s session adds to the total and replaces last session.
+        let t1 = t0 + Duration::seconds(3600);
+        state.play_start(gid, t1).await.unwrap();
+        state.play_stop(gid, t1 + Duration::seconds(60)).await.unwrap();
+        let s = state.play_stats().await.unwrap();
+        let p = s.get(&gid).unwrap();
+        assert_eq!(p.total_secs, 150);
+        assert_eq!(p.last_session_secs, Some(60));
+
+        // Stop with no open session (daemon restarted mid-play): last_played
+        // still moves, but no bogus duration is counted.
+        let other = Uuid::now_v7();
+        state.play_stop(other, Utc::now()).await.unwrap();
+        let s = state.play_stats().await.unwrap();
+        let o = s.get(&other).unwrap();
+        assert_eq!(o.total_secs, 0);
+        assert_eq!(o.last_session_secs, None);
+        assert!(o.last_played.is_some());
+
+        // Startup reconciliation clears an open session, so the next stop cannot
+        // credit a bogus duration for a stop the daemon never actually observed.
+        let g3 = Uuid::now_v7();
+        state.play_start(g3, t0).await.unwrap();
+        state.close_orphaned_sessions().await.unwrap();
+        state.play_stop(g3, t0 + Duration::seconds(9999)).await.unwrap();
+        let s = state.play_stats().await.unwrap();
+        let p = s.get(&g3).unwrap();
+        assert_eq!(p.total_secs, 0);
+        assert_eq!(p.last_session_secs, None);
     }
 }

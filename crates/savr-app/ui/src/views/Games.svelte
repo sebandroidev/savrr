@@ -10,7 +10,13 @@
   } from "../lib/api";
   import type { Game, Version } from "../lib/types";
   import { errorMessage, isDaemonDown } from "../lib/types";
-  import { formatBytes, formatDateTime, shortId } from "../lib/format";
+  import {
+    formatBytes,
+    formatDateTime,
+    formatRelative,
+    formatUptime,
+    shortId,
+  } from "../lib/format";
   import { notify } from "../lib/toasts";
   import { confirm } from "@tauri-apps/plugin-dialog";
   import Icon from "../components/Icon.svelte";
@@ -159,6 +165,11 @@
             <span class="meta">
               <span class="badge">{game.source}</span>
               {#if game.steam_appid}<span class="dim mono">#{game.steam_appid}</span>{/if}
+              {#if game.running}
+                <span class="badge live"><span class="pulse"></span>Playing</span>
+              {:else if game.last_played}
+                <span class="dim">Played {formatRelative(game.last_played)}</span>
+              {/if}
             </span>
           </button>
         </li>
@@ -177,6 +188,22 @@
             <div>
               <h2>{selected.title}</h2>
               <span class="dim mono">{shortId(selected.id)}</span>
+              <div class="playstat">
+                {#if selected.running}
+                  <span class="badge live"><span class="pulse"></span>Playing now</span>
+                {/if}
+                <span class="dim"
+                  >Last played: {selected.last_played
+                    ? formatDateTime(selected.last_played)
+                    : "never"}</span
+                >
+                {#if selected.last_session_secs != null}
+                  <span class="dim">· Last session {formatUptime(selected.last_session_secs)}</span>
+                {/if}
+                {#if selected.total_secs > 0}
+                  <span class="dim">· {formatUptime(selected.total_secs)} total</span>
+                {/if}
+              </div>
             </div>
             <div class="actions">
               <button class="sm" onclick={() => doLearn(selected!)} disabled={busyId === selected.id}>
@@ -300,6 +327,39 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
+  }
+  .badge.live {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: color-mix(in srgb, var(--good, #2ecc71) 18%, transparent);
+    color: var(--good, #2ecc71);
+    border-color: transparent;
+  }
+  .pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+  .playstat {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 12.5px;
   }
   .detail-head {
     display: flex;

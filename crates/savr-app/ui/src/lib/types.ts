@@ -30,6 +30,11 @@ export interface Game {
   source: GameSource;
   steam_appid: number | null;
   save_targets: SaveTarget[];
+  // Detection/play stats overlaid by the daemon (see savr-core Game).
+  running: boolean;
+  last_played: IsoDateTime | null;
+  last_session_secs: number | null;
+  total_secs: number;
 }
 
 export interface FileEntry {

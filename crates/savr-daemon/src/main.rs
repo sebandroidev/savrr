@@ -38,6 +38,9 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("savr-daemon {} starting", env!("CARGO_PKG_VERSION"));
 
     let state = LocalState::open(&db_path()).await?;
+    // Drop any play session left open by a previous run that never saw the game
+    // close (crash/kill mid-play); that duration is unrecoverable either way.
+    let _ = state.close_orphaned_sessions().await;
 
     // A server URL persisted by pairing is the source of truth for where to sync,
     // overriding the config-file default. Without this the daemon reverts to the

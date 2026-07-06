@@ -93,6 +93,21 @@ pub struct Game {
     pub source: GameSource,
     pub steam_appid: Option<u32>,
     pub save_targets: Vec<SaveTarget>,
+    // Detection/play stats, overlaid by the daemon's ListGames from its local
+    // `play_stats` table + live running set. Defaulted so every other producer
+    // of a Game (and any older payload) stays valid without setting them.
+    /// True while a process from this game's install dir is running right now.
+    #[serde(default)]
+    pub running: bool,
+    /// When the game was last seen starting (RFC3339 UTC), if ever.
+    #[serde(default)]
+    pub last_played: Option<DateTime<Utc>>,
+    /// Duration of the most recently finished play session, in seconds.
+    #[serde(default)]
+    pub last_session_secs: Option<i64>,
+    /// Accumulated play time across all finished sessions, in seconds.
+    #[serde(default)]
+    pub total_secs: i64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

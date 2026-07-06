@@ -214,6 +214,11 @@ impl Engine {
                     source,
                     steam_appid: Some(sg.appid),
                     save_targets,
+                    // Overlaid fresh from play_stats + the running set in ListGames.
+                    running: false,
+                    last_played: None,
+                    last_session_secs: None,
+                    total_secs: 0,
                 };
                 let resolved = resolve_game(&game, &overrides, &ctx);
                 index.index_install_dir(&lib.install_path(sg), game_id);
@@ -298,7 +303,25 @@ impl Engine {
         match req {
             GuiRequest::ListGames => {
                 let games = self.games.read().await;
-                DaemonMsg::Games(games.values().map(|e| e.game.clone()).collect())
+                // Read the running set BEFORE the DB stats: on_event persists the
+                // play row before setting the running flag, so this order means a
+                // game seen running always has its stats row loaded here too.
+                let running = self.running.read().await;
+                let stats = self.state.play_stats().await.unwrap_or_default();
+                let listing = games
+                    .values()
+                    .map(|e| {
+                        let mut g = e.game.clone();
+                        g.running = running.contains(&g.id);
+                        if let Some(s) = stats.get(&g.id) {
+                            g.last_played = s.last_played;
+                            g.last_session_secs = s.last_session_secs;
+                            g.total_secs = s.total_secs;
+                        }
+                        g
+                    })
+                    .collect();
+                DaemonMsg::Games(listing)
             }
             GuiRequest::ListRoots => match self.state.list_roots().await {
                 Ok(roots) => DaemonMsg::Roots(roots),
@@ -542,7 +565,15 @@ impl Engine {
                 }
                 msg = rx.recv() => {
                     match msg {
-                        Ok(event) => self.on_event(event).await,
+                        Ok(event) => {
+                            // Back up OFF the event loop: a slow save upload must
+                            // not stall detection of the next launch (the live
+                            // running flag) behind it.
+                            if let Some(game_id) = self.on_event(event).await {
+                                let engine = self.clone();
+                                tokio::spawn(async move { engine.trigger_backup(game_id).await; });
+                            }
+                        }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             tracing::warn!("event loop lagged, dropped {n} events");
                         }
@@ -553,26 +584,39 @@ impl Engine {
         }
     }
 
-    async fn on_event(&self, event: DetectionEvent) {
+    /// Handle one detection event. Returns a game whose save should be backed
+    /// up; the caller spawns that off the loop so a slow upload never stalls the
+    /// next event. Fast, ordered in-memory + DB work stays inline here.
+    async fn on_event(&self, event: DetectionEvent) -> Option<GameId> {
         match event {
-            DetectionEvent::GameStarted { game_id, .. } => {
+            DetectionEvent::GameStarted { game_id, at, .. } => {
+                // Persist the play row BEFORE flipping the in-memory running flag,
+                // so any ListGames that observes running=true also sees the row
+                // (never "Playing" next to "Last played: never").
+                let _ = self.state.play_start(game_id, at).await;
                 self.running.write().await.insert(game_id);
+                // Nudge the GUI so the game lights up as "Playing" right away.
+                let _ = self.events.send(DetectionEvent::CatalogUpdated);
+                None
             }
-            DetectionEvent::GameStopped { game_id, .. } => {
+            DetectionEvent::GameStopped { game_id, at } => {
+                // Record the finished session before clearing the running flag,
+                // for the same read-consistency reason.
+                let _ = self.state.play_stop(game_id, at).await;
                 self.running.write().await.remove(&game_id);
-                self.trigger_backup(game_id).await;
+                let _ = self.events.send(DetectionEvent::CatalogUpdated);
+                Some(game_id)
             }
-            DetectionEvent::ManualBackupRequested { game_id } => {
-                self.trigger_backup(game_id).await;
-            }
+            DetectionEvent::ManualBackupRequested { game_id } => Some(game_id),
             DetectionEvent::SaveDirChanged { .. } => {
                 // Live mid-session backup is off by default (PRD-02 §5, G5).
+                None
             }
             // The engine emits these for the app (toasts / reload); loop ignores.
             DetectionEvent::BackupCompleted { .. }
             | DetectionEvent::BackupConflict { .. }
             | DetectionEvent::SaveAvailable { .. }
-            | DetectionEvent::CatalogUpdated => {}
+            | DetectionEvent::CatalogUpdated => None,
         }
     }
 
