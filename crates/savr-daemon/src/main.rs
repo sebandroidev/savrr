@@ -34,10 +34,22 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = DaemonConfig::load_default()?;
+    let mut config = DaemonConfig::load_default()?;
     tracing::info!("savr-daemon {} starting", env!("CARGO_PKG_VERSION"));
 
     let state = LocalState::open(&db_path()).await?;
+
+    // A server URL persisted by pairing is the source of truth for where to sync,
+    // overriding the config-file default. Without this the daemon reverts to the
+    // default localhost:8080 on every launch and every server call (version
+    // history, backups) fails even though pairing stored the real URL. An
+    // explicit SAVR_SERVER_URL env var still wins (ops override).
+    if std::env::var_os("SAVR_SERVER_URL").is_none() {
+        if let Ok(Some(url)) = state.get_meta("server_url").await {
+            tracing::info!("using paired server url from local state: {url}");
+            config.server_url = url;
+        }
+    }
     let secret_store: Arc<dyn SecretStore> = Arc::from(secrets::from_env(&config_root()));
     let (events, _keepalive) = broadcast::channel(256);
     let engine = Engine::new(config.clone(), state, secret_store, events.clone()).await?;
