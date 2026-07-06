@@ -2,6 +2,18 @@
 
 Notable changes to Savrr. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions aim for [semantic versioning](https://semver.org/spec/v2.0.0.html) once past 1.0.
 
+## [0.1.3] - 2026-07-06
+
+Savr tells you when it's working.
+
+### Added
+
+- Desktop notifications around your games, in the spirit of Steam's cloud-save toasts. When a game starts, Savr says it's watching; when you close it, Savr confirms your save was backed up. You'll also get a heads-up when a save from another device is waiting, or when two saves conflict. On Windows the toast shows the real Savr name and icon once the app is installed.
+
+### Fixed
+
+- Two Savr icons showed up in the Windows system tray instead of one.
+
 ## [0.1.2] - 2026-07-04
 
 Your games stick around, and Savr sees more of them.
@@ -41,6 +53,7 @@ The first working slice of the whole system: shared core, server, headless daemo
 
 - An adversarial code review before release fixed a device-revocation gap (a revoked device kept its WebSocket), an offline-differential backup inconsistency, a config-sync tag drop, and a device-state oracle on `/auth/refresh`. Remaining known issues are tracked in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
+[0.1.3]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.3
 [0.1.2]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.2
 [0.1.1]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.1
 [0.1.0]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.0
