@@ -557,6 +557,10 @@ impl Engine {
             DetectionEvent::SaveDirChanged { .. } => {
                 // Live mid-session backup is off by default (PRD-02 §5, G5).
             }
+            // The engine emits these for the app to toast; the loop ignores them.
+            DetectionEvent::BackupCompleted { .. }
+            | DetectionEvent::BackupConflict { .. }
+            | DetectionEvent::SaveAvailable { .. } => {}
         }
     }
 
@@ -576,14 +580,16 @@ impl Engine {
         .await
         {
             Ok(BackupOutcome::Uploaded { version }) => {
-                crate::notify::toast("Save backed up", &entry.game.title).await;
+                let _ = self
+                    .events
+                    .send(DetectionEvent::BackupCompleted { game_id });
                 tracing::info!("backed up {} -> version {}", entry.game.title, version.id);
             }
             Ok(BackupOutcome::Conflict { head, incoming }) => {
                 let _ = self
                     .record_conflict(game_id, head.as_ref().map(|h| h.id), incoming.id)
                     .await;
-                crate::notify::toast("Sync conflict", &entry.game.title).await;
+                let _ = self.events.send(DetectionEvent::BackupConflict { game_id });
             }
             Ok(BackupOutcome::Queued) => {
                 tracing::info!("{} queued for upload (offline)", entry.game.title);
@@ -621,14 +627,7 @@ impl Engine {
                 }
             }
             _ => {
-                let title = self
-                    .games
-                    .read()
-                    .await
-                    .get(&game_id)
-                    .map(|e| e.game.title.clone())
-                    .unwrap_or_else(|| game_id.to_string());
-                crate::notify::toast("New save available", &title).await;
+                let _ = self.events.send(DetectionEvent::SaveAvailable { game_id });
             }
         }
     }
@@ -641,7 +640,7 @@ impl Engine {
                 .await
                 .insert(game_id, ConflictTips { mine, theirs });
         }
-        crate::notify::toast("Sync conflict", &game_id.to_string()).await;
+        let _ = self.events.send(DetectionEvent::BackupConflict { game_id });
     }
 
     /// Retry any queued uploads against the server (PRD-03 §8).

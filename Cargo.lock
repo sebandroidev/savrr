@@ -4101,6 +4101,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tauri-plugin-notification",
  "tauri-plugin-process",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
@@ -4141,7 +4142,6 @@ dependencies = [
  "glob",
  "interprocess",
  "keyring",
- "notify-rust",
  "rand 0.8.6",
  "reqwest 0.12.28",
  "savr-core",
@@ -5312,6 +5312,25 @@ dependencies = [
  "tauri-utils",
  "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
+ "url",
+]
+
+[[package]]
+name = "tauri-plugin-notification"
+version = "2.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01fc2c5ff41105bd1f7242d8201fdf3efd70749b82fa013a17f2126357d194cc"
+dependencies = [
+ "log",
+ "notify-rust",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+ "time",
  "url",
 ]
 

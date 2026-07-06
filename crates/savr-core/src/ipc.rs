@@ -53,7 +53,10 @@ pub struct DaemonStatus {
     pub pending_outbox: u32,
 }
 
-/// Detection engine outputs (PRD-02 §5), also streamed to the GUI live feed.
+/// Engine events streamed to the GUI live feed (PRD-02 §5): raw detection edges
+/// plus the backup/sync outcomes the app turns into desktop toasts. Toasts are
+/// the app's job, never the daemon's — the daemon also runs headless as a
+/// server, where there is no desktop to notify.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DetectionEvent {
@@ -70,6 +73,18 @@ pub enum DetectionEvent {
         game_id: GameId,
     },
     SaveDirChanged {
+        game_id: GameId,
+    },
+    /// A save was backed up (usually on game exit) — the app confirms with a toast.
+    BackupCompleted {
+        game_id: GameId,
+    },
+    /// A backup diverged from the server head; the user must pick a save to keep.
+    BackupConflict {
+        game_id: GameId,
+    },
+    /// A newer save arrived from another device and was not auto-pulled.
+    SaveAvailable {
         game_id: GameId,
     },
 }

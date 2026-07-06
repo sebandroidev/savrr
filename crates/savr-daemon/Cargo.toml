@@ -52,7 +52,6 @@ sqlx = { version = "0.8", default-features = false, features = [
     "sqlite",
 ] }
 sysinfo = "0.33"
-notify-rust = "4"
 interprocess = { version = "2", features = ["tokio"] }
 futures-util = "0.3"
 rand = "0.8"

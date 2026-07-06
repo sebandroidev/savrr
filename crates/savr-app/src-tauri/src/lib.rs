@@ -51,12 +51,18 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Lets the frontend relaunch the app after an update installs.
         .plugin(tauri_plugin_process::init())
+        // Native OS toasts (game start/close + backup outcomes).
+        .plugin(tauri_plugin_notification::init())
         .manage(daemon::Supervisor::default())
         .setup(|app| {
             let handle = app.handle();
 
             // Start the bundled daemon (no-op in dev if it isn't staged).
             daemon::start(handle);
+
+            // Subscribe to the daemon's pushed events and turn game start/close
+            // + backup outcomes into OS toasts (runs even while hidden to tray).
+            tauri::async_runtime::spawn(ipc_client::run_event_subscription(handle.clone()));
 
             // System tray: the app lives here while the window is hidden, so
             // the daemon keeps running in the background (PRD-07 §3).

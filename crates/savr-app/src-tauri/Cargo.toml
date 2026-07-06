@@ -26,6 +26,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 # Spawns the bundled daemon sidecar (declared in tauri.conf.json externalBin).
 tauri-plugin-shell = "2"
+# Native OS toasts for game start/close + backup outcomes, sent from Rust.
+tauri-plugin-notification = "2"
 
 # interprocess gives one abstraction over unix sockets / windows named pipes;
 # the "tokio" feature yields streams that impl tokio AsyncRead/AsyncWrite, which
