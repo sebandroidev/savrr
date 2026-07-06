@@ -2,8 +2,9 @@ name: Release
 
 # Tag a version to cut a release:
 #   git tag v0.1.0 && git push origin v0.1.0
-# Produces: signed desktop bundles + updater latest.json (GUI), per-OS daemon
-# binaries, and a savr-server container image on GHCR.
+# Produces: a signed Windows desktop installer + updater latest.json (GUI), the
+# Windows daemon binary, and a savr-server container image on GHCR. The client
+# is Windows-only for now; the server image stays Linux.
 
 on:
   push:
@@ -41,36 +42,15 @@ jobs:
             });
             return data.id;
 
-  # Desktop app: signed bundles + updater manifest, per OS.
+  # Desktop app (Windows): signed installer + updater manifest.
   build-app:
     needs: create-release
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            target: universal-apple-darwin
-          - os: ubuntu-latest
-            target: ''
-          - os: windows-latest
-            target: ''
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Linux deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
-            libayatana-appindicator3-dev libsoup-3.0-dev libssl-dev pkg-config \
-            libdbus-1-dev
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: Swatinem/rust-cache@v2
 
@@ -86,33 +66,17 @@ jobs:
         working-directory: crates/savr-app/ui
         run: pnpm install --frozen-lockfile
 
-      # Bundle the daemon inside the app: build it for this target and stage it
-      # as the Tauri sidecar (binaries/savr-daemon-<triple>[.exe]). The macOS
-      # app is universal, so its sidecar must be a universal (lipo'd) binary.
+      # Bundle the daemon inside the app: build it and stage it as the Tauri
+      # sidecar (binaries/savr-daemon-<triple>.exe).
       - name: Build & stage the daemon sidecar
         shell: bash
         run: |
           set -euo pipefail
           DEST="crates/savr-app/src-tauri/binaries"
           mkdir -p "$DEST"
-          if [ "${{ matrix.target }}" = "universal-apple-darwin" ]; then
-            # A universal build needs all three: a per-arch sidecar for each
-            # slice's compile (savr-daemon-<arch>-apple-darwin), AND a lipo'd
-            # universal one for the bundling step (…-universal-apple-darwin).
-            cargo build --release -p savr-daemon --target aarch64-apple-darwin
-            cargo build --release -p savr-daemon --target x86_64-apple-darwin
-            cp target/aarch64-apple-darwin/release/savr-daemon "$DEST/savr-daemon-aarch64-apple-darwin"
-            cp target/x86_64-apple-darwin/release/savr-daemon "$DEST/savr-daemon-x86_64-apple-darwin"
-            lipo -create -output "$DEST/savr-daemon-universal-apple-darwin" \
-              "$DEST/savr-daemon-aarch64-apple-darwin" \
-              "$DEST/savr-daemon-x86_64-apple-darwin"
-          else
-            TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
-            EXE=""
-            [ "${{ runner.os }}" = "Windows" ] && EXE=".exe"
-            cargo build --release -p savr-daemon
-            cp "target/release/savr-daemon${EXE}" "$DEST/savr-daemon-${TRIPLE}${EXE}"
-          fi
+          TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+          cargo build --release -p savr-daemon
+          cp "target/release/savr-daemon.exe" "$DEST/savr-daemon-${TRIPLE}.exe"
 
       - name: Build & sign the app
         uses: tauri-apps/tauri-action@v0
@@ -124,30 +88,13 @@ jobs:
           projectPath: crates/savr-app
           releaseId: ${{ needs.create-release.outputs.release_id }}
           includeUpdaterJson: true
-          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
 
-  # Headless daemon: raw per-OS binaries attached to the release.
+  # Headless daemon: the raw Windows binary attached to the release.
   build-daemon:
     needs: create-release
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: savr-daemon-linux-x86_64
-            ext: ''
-          - os: macos-latest
-            name: savr-daemon-macos-arm64
-            ext: ''
-          - os: windows-latest
-            name: savr-daemon-windows-x86_64.exe
-            ext: '.exe'
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Linux deps
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config libdbus-1-dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build daemon
@@ -155,11 +102,11 @@ jobs:
       - name: Stage & upload
         shell: bash
         run: |
-          cp "target/release/savr-daemon${{ matrix.ext }}" "${{ matrix.name }}"
-          # Several jobs upload to the same draft release at once; GitHub can
+          cp "target/release/savr-daemon.exe" "savr-daemon-windows-x86_64.exe"
+          # build-app uploads to the same draft release concurrently; GitHub can
           # return a transient 404 under that contention, so retry.
           for attempt in 1 2 3 4 5; do
-            if gh release upload "${GITHUB_REF_NAME}" "${{ matrix.name }}" --clobber; then
+            if gh release upload "${GITHUB_REF_NAME}" "savr-daemon-windows-x86_64.exe" --clobber; then
               exit 0
             fi
             echo "upload attempt $attempt failed; retrying in $((attempt * 5))s"

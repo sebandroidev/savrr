@@ -1,0 +1,3 @@
+# Normalize all text to LF in the working tree on every platform. Keeps
+# `cargo fmt --check` reliable on the Windows CI runner (no CRLF surprises).
+* text=auto eol=lf
