@@ -2,6 +2,14 @@
 
 Notable changes to Savrr. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions aim for [semantic versioning](https://semver.org/spec/v2.0.0.html) once past 1.0.
 
+## [0.1.4] - 2026-07-06
+
+Your games show up right away.
+
+### Fixed
+
+- The games list could come up empty right after launching or updating Savr. The app was asking for your games while the daemon was still starting up, then never asked again. Savr now builds the list before that slow step and reloads on its own the moment it's ready, so your games appear within a second instead of not at all.
+
 ## [0.1.3] - 2026-07-06
 
 Savr tells you when it's working.
@@ -53,6 +61,7 @@ The first working slice of the whole system: shared core, server, headless daemo
 
 - An adversarial code review before release fixed a device-revocation gap (a revoked device kept its WebSocket), an offline-differential backup inconsistency, a config-sync tag drop, and a device-state oracle on `/auth/refresh`. Remaining known issues are tracked in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
+[0.1.4]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.4
 [0.1.3]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.3
 [0.1.2]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.2
 [0.1.1]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.1
