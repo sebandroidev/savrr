@@ -2,6 +2,18 @@
 
 Notable changes to Savrr. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions aim for [semantic versioning](https://semver.org/spec/v2.0.0.html) once past 1.0.
 
+## [0.1.6] - 2026-07-06
+
+See at a glance whether Savr is watching your games.
+
+### Added
+
+- The Games tab now shows a live "Playing" badge the moment Savr detects a game start, plus when each game was last played and how long your last and total sessions ran. This works even for games Savr doesn't have a save location for yet, so it's a direct way to confirm detection is working.
+
+### Fixed
+
+- A backup running after you close one game no longer delays Savr noticing the next game you launch — detection and the "Playing" badge stay responsive while a save uploads in the background.
+
 ## [0.1.5] - 2026-07-06
 
 Version history works again, and Savr shows its own version.
@@ -73,6 +85,7 @@ The first working slice of the whole system: shared core, server, headless daemo
 
 - An adversarial code review before release fixed a device-revocation gap (a revoked device kept its WebSocket), an offline-differential backup inconsistency, a config-sync tag drop, and a device-state oracle on `/auth/refresh`. Remaining known issues are tracked in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
+[0.1.6]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.6
 [0.1.5]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.5
 [0.1.4]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.4
 [0.1.3]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.3
