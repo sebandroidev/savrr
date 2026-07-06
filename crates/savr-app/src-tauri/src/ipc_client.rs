@@ -20,7 +20,7 @@ use interprocess::local_socket::GenericFilePath;
 use interprocess::local_socket::GenericNamespaced;
 use savr_core::ipc::{read_frame, write_frame, DaemonMsg, DetectionEvent, GuiRequest};
 use savr_core::GameId;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::error::CmdError;
@@ -119,12 +119,21 @@ async fn subscribe_once(
 ) -> Result<(), CmdError> {
     let conn = connect().await?;
     let mut sock = &conn;
+    // Reload the GUI on every (re)connect: the daemon may have built its catalog
+    // before this subscription attached, and broadcast events aren't replayed, so
+    // its startup CatalogUpdated could have been missed. This catches up.
+    let _ = app.emit("catalog-updated", ());
     loop {
         let msg: Option<DaemonMsg> = read_frame(&mut sock)
             .await
             .map_err(|e| CmdError::Io(e.to_string()))?;
         match msg {
             None => return Ok(()), // clean EOF: daemon exited -> reconnect
+            // Catalog rebuilt: nudge the GUI to reload its games list rather than
+            // sit on the empty catalog it may have queried at startup.
+            Some(DaemonMsg::Event(DetectionEvent::CatalogUpdated)) => {
+                let _ = app.emit("catalog-updated", ());
+            }
             Some(DaemonMsg::Event(event)) => {
                 if let Some((title, body)) = toast_for(event, titles).await {
                     let _ = app.notification().builder().title(title).body(body).show();
@@ -200,9 +209,9 @@ async fn toast_for(
                 format!("{t} — open Savr to download it."),
             ))
         }
-        DetectionEvent::ManualBackupRequested { .. } | DetectionEvent::SaveDirChanged { .. } => {
-            None
-        }
+        DetectionEvent::ManualBackupRequested { .. }
+        | DetectionEvent::SaveDirChanged { .. }
+        | DetectionEvent::CatalogUpdated => None,
     }
 }
 

@@ -26,6 +26,21 @@ async fn test_engine() -> Arc<Engine> {
         .unwrap()
 }
 
+/// Read the next reply, skipping any pushed detection events. Every connection
+/// carries the live event stream (e.g. AddRoot triggers a catalog refresh whose
+/// `CatalogUpdated` event interleaves), so the real GUI client skips them too.
+async fn read_reply<R>(r: &mut R) -> DaemonMsg
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    loop {
+        match read_frame::<_, DaemonMsg>(r).await.unwrap().unwrap() {
+            DaemonMsg::Event(_) => continue,
+            msg => return msg,
+        }
+    }
+}
+
 #[tokio::test]
 async fn dispatches_requests_over_duplex() {
     let engine = test_engine().await;
@@ -39,7 +54,7 @@ async fn dispatches_requests_over_duplex() {
     write_frame(&mut client, &GuiRequest::GetStatus)
         .await
         .unwrap();
-    match read_frame(&mut client).await.unwrap().unwrap() {
+    match read_reply(&mut client).await {
         DaemonMsg::Status(s) => {
             assert_eq!(s.version, env!("CARGO_PKG_VERSION"));
             assert_eq!(s.watched_games, 0);
@@ -51,7 +66,7 @@ async fn dispatches_requests_over_duplex() {
     write_frame(&mut client, &GuiRequest::GetConfig)
         .await
         .unwrap();
-    match read_frame(&mut client).await.unwrap().unwrap() {
+    match read_reply(&mut client).await {
         DaemonMsg::Config(_) => {}
         other => panic!("expected Config, got {other:?}"),
     }
@@ -66,10 +81,7 @@ async fn dispatches_requests_over_duplex() {
     )
     .await
     .unwrap();
-    let msg = read_frame::<_, DaemonMsg>(&mut client)
-        .await
-        .unwrap()
-        .unwrap();
+    let msg = read_reply(&mut client).await;
     assert!(matches!(msg, DaemonMsg::Ok), "expected Ok, got {msg:?}");
 
     // ListRoots exercises dispatch, but its reply type `DaemonMsg::Roots` is a
@@ -79,11 +91,7 @@ async fn dispatches_requests_over_duplex() {
     write_frame(&mut client, &GuiRequest::ListRoots)
         .await
         .unwrap();
-    match read_frame::<_, DaemonMsg>(&mut client)
-        .await
-        .unwrap()
-        .unwrap()
-    {
+    match read_reply(&mut client).await {
         DaemonMsg::Error { message } => {
             assert!(message.contains("encode"), "unexpected error: {message}");
         }
@@ -100,10 +108,7 @@ async fn dispatches_requests_over_duplex() {
     )
     .await
     .unwrap();
-    let msg = read_frame::<_, DaemonMsg>(&mut client)
-        .await
-        .unwrap()
-        .unwrap();
+    let msg = read_reply(&mut client).await;
     assert!(matches!(msg, DaemonMsg::Error { .. }), "got {msg:?}");
 
     // Closing the client cleanly ends the server task.

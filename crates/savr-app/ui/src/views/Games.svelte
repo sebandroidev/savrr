@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import {
     listGames,
     listVersions,
@@ -108,7 +109,16 @@
     }
   }
 
-  onMount(loadGames);
+  onMount(() => {
+    loadGames();
+    // The daemon builds its catalog after a slow startup manifest fetch, so the
+    // first load can come back empty. It emits "catalog-updated" when the catalog
+    // (re)builds — reload then instead of leaving a stale empty list.
+    const unlisten = listen("catalog-updated", () => loadGames());
+    return () => {
+      unlisten.then((off) => off());
+    };
+  });
 </script>
 
 <div class="head">

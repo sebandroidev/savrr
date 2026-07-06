@@ -69,25 +69,36 @@ async fn main() -> anyhow::Result<()> {
         }));
     }
 
-    // FIRST BACKGROUND TASK (PRD-02 §1.1): fetch + parse the real manifest.
     let manifest_dir = config.manifest_dir();
+
+    // Build the catalog BEFORE the (possibly slow, network-bound) manifest fetch.
+    // refresh_games lists installed Steam games without a manifest, so the GUI
+    // sees its games within a second instead of after the manifest round-trip —
+    // otherwise a cold start answers the GUI's first ListGames from an empty
+    // catalog and it never re-asks. First-boot roots convenience runs here too.
+    engine.ensure_default_roots().await.ok();
+    if let Err(e) = engine.refresh_games(false).await {
+        tracing::warn!("initial catalog build failed: {e}");
+    }
+
+    // FIRST BACKGROUND TASK (PRD-02 §1.1): fetch the manifest, then rebuild the
+    // catalog to enrich titles + save targets. refresh_games emits CatalogUpdated
+    // so the GUI reloads with the richer data.
     match manifest_sync::refresh(&manifest_dir).await {
         Ok(outcome) => {
             tracing::info!("manifest ready: {} entries", outcome.entry_count);
             engine.set_manifest(outcome.manifest).await;
+            if let Err(e) = engine.refresh_games(true).await {
+                tracing::warn!("catalog enrich after manifest failed: {e}");
+            }
         }
         Err(e) => {
             tracing::warn!("manifest refresh failed ({e}); trying cache");
             if let Some(m) = manifest_sync::load_cached(&manifest_dir)? {
                 engine.set_manifest(m).await;
+                let _ = engine.refresh_games(true).await;
             }
         }
-    }
-
-    // First-boot convenience + build the initial catalog / exe index.
-    engine.ensure_default_roots().await.ok();
-    if let Err(e) = engine.refresh_games().await {
-        tracing::warn!("initial catalog build failed: {e}");
     }
 
     tray::spawn();
@@ -159,7 +170,7 @@ async fn manifest_loop(
                 match manifest_sync::refresh(&manifest_dir).await {
                     Ok(o) if !o.not_modified => {
                         engine.set_manifest(o.manifest).await;
-                        let _ = engine.refresh_games().await;
+                        let _ = engine.refresh_games(true).await;
                     }
                     Ok(_) => {}
                     Err(e) => tracing::warn!("daily manifest refresh failed: {e}"),

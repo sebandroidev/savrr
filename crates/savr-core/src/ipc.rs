@@ -87,6 +87,11 @@ pub enum DetectionEvent {
     SaveAvailable {
         game_id: GameId,
     },
+    /// The games catalog was (re)built — startup, manifest refresh, or a roots
+    /// change. The GUI reloads its list on this: `refresh_games` runs after a
+    /// slow manifest fetch, so an initial GUI query can otherwise see an empty
+    /// catalog and never re-ask.
+    CatalogUpdated,
 }
 
 // ---- request / response enums ----

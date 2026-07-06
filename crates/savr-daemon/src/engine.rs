@@ -145,7 +145,14 @@ impl Engine {
 
     /// Rebuild the games catalog + exe index from registered Steam roots and
     /// the manifest (PRD-02 §1, §3.2). Idempotent; safe to call on any change.
-    pub async fn refresh_games(&self) -> anyhow::Result<()> {
+    ///
+    /// `enrich_ids`: when true and paired, resolve each game's canonical server
+    /// id via `ensure_game` (a serial HTTP call per game). Pass false for the
+    /// fast pre-manifest startup pass — it lists games from local state only, so
+    /// the GUI fills instantly without N network round-trips, and no game is
+    /// registered server-side under its raw Steam folder name before the
+    /// manifest supplies the canonical title.
+    pub async fn refresh_games(&self, enrich_ids: bool) -> anyhow::Result<()> {
         let steam_libs = self.discover_steam_libraries().await?;
         let manifest = self.manifest.read().await;
 
@@ -169,7 +176,7 @@ impl Engine {
             .await?
             .map(|c| c.overrides)
             .unwrap_or_default();
-        let authed = self.client.is_authenticated().await;
+        let authed = enrich_ids && self.client.is_authenticated().await;
 
         let mut games = HashMap::new();
         let mut index = ExeIndex::new();
@@ -220,6 +227,10 @@ impl Engine {
         self.state.replace_exe_index(&index.to_rows()).await?;
         *self.exe_index.write().await = index;
         tracing::info!("catalog refreshed: {n} watched games");
+        // Tell the GUI to reload — it may have queried an empty catalog before
+        // this first build finished (the catalog is populated after startup's
+        // manifest fetch).
+        let _ = self.events.send(DetectionEvent::CatalogUpdated);
         Ok(())
     }
 
@@ -296,7 +307,7 @@ impl Engine {
             GuiRequest::AddRoot(spec) => self.add_root(spec).await,
             GuiRequest::RemoveRoot { id } => match self.state.remove_root(id).await {
                 Ok(()) => {
-                    let _ = self.refresh_games().await;
+                    let _ = self.refresh_games(true).await;
                     DaemonMsg::Ok
                 }
                 Err(e) => err(e),
@@ -344,7 +355,7 @@ impl Engine {
     async fn add_root(&self, spec: RootSpec) -> DaemonMsg {
         match self.state.add_root(spec.kind, &spec.path).await {
             Ok(_) => {
-                let _ = self.refresh_games().await;
+                let _ = self.refresh_games(true).await;
                 DaemonMsg::Ok
             }
             Err(e) => err(e),
@@ -450,7 +461,7 @@ impl Engine {
                 Err(e) => tracing::warn!("config push failed (kept locally): {e}"),
             }
         }
-        let _ = self.refresh_games().await;
+        let _ = self.refresh_games(true).await;
         DaemonMsg::Ok
     }
 
@@ -557,10 +568,11 @@ impl Engine {
             DetectionEvent::SaveDirChanged { .. } => {
                 // Live mid-session backup is off by default (PRD-02 §5, G5).
             }
-            // The engine emits these for the app to toast; the loop ignores them.
+            // The engine emits these for the app (toasts / reload); loop ignores.
             DetectionEvent::BackupCompleted { .. }
             | DetectionEvent::BackupConflict { .. }
-            | DetectionEvent::SaveAvailable { .. } => {}
+            | DetectionEvent::SaveAvailable { .. }
+            | DetectionEvent::CatalogUpdated => {}
         }
     }
 
@@ -674,7 +686,7 @@ impl Engine {
         }
         let cfg = self.client.get_config().await?;
         self.state.set_synced_config(&cfg).await?;
-        self.refresh_games().await?;
+        self.refresh_games(true).await?;
         Ok(())
     }
 }
