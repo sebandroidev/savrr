@@ -10,7 +10,7 @@ use savr_daemon::engine::Engine;
 use savr_daemon::ipc::serve_connection;
 use savr_daemon::secrets::{FileStore, SecretStore};
 use savr_daemon::state::LocalState;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 async fn test_engine() -> Arc<Engine> {
     let state = LocalState::open_memory().await.unwrap();
@@ -45,9 +45,10 @@ where
 async fn dispatches_requests_over_duplex() {
     let engine = test_engine().await;
     let (mut client, server) = tokio::io::duplex(64 * 1024);
+    let (shutdown_tx, _shutdown_rx) = watch::channel(false);
 
     let handle = tokio::spawn(async move {
-        serve_connection(engine, server).await.unwrap();
+        serve_connection(engine, server, shutdown_tx).await.unwrap();
     });
 
     // GetStatus → Status (a newtype-of-struct variant, encodes fine).
@@ -113,5 +114,31 @@ async fn dispatches_requests_over_duplex() {
 
     // Closing the client cleanly ends the server task.
     drop(client);
+    handle.await.unwrap();
+}
+
+/// A `Shutdown` request acks `Ok`, trips the shared watch channel so the whole
+/// daemon drains, and ends the connection — the mechanism the app relies on to
+/// stop a stale daemon before an update relaunch.
+#[tokio::test]
+async fn shutdown_acks_and_trips_channel() {
+    let engine = test_engine().await;
+    let (mut client, server) = tokio::io::duplex(64 * 1024);
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+
+    let handle = tokio::spawn(async move {
+        serve_connection(engine, server, shutdown_tx).await.unwrap();
+    });
+
+    write_frame(&mut client, &GuiRequest::Shutdown)
+        .await
+        .unwrap();
+    let msg = read_reply(&mut client).await;
+    assert!(matches!(msg, DaemonMsg::Ok), "expected Ok, got {msg:?}");
+
+    shutdown_rx.changed().await.unwrap();
+    assert!(*shutdown_rx.borrow(), "shutdown channel should be true");
+
+    // The server task returns on its own once Shutdown breaks the loop.
     handle.await.unwrap();
 }

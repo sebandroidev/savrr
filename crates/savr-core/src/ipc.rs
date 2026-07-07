@@ -140,6 +140,11 @@ pub enum GuiRequest {
     SetAutostart {
         enabled: bool,
     },
+    /// Ask the daemon to shut down. The app sends this before an update relaunch
+    /// so whatever daemon is listening — a bundled sidecar or a login-started
+    /// headless one the app merely adopted — exits and frees the socket for the
+    /// fresh instance, instead of a stale binary surviving the update.
+    Shutdown,
 }
 
 // Adjacently tagged (`content = "data"`), not internally tagged: the newtype
@@ -299,5 +304,12 @@ mod tests {
         let frame = encode_frame(&req).expect("SetAutostart must encode");
         let back: GuiRequest = serde_json::from_slice(&frame[4..]).unwrap();
         assert!(matches!(back, GuiRequest::SetAutostart { enabled: true }));
+    }
+
+    #[test]
+    fn shutdown_encodes() {
+        let frame = encode_frame(&GuiRequest::Shutdown).expect("Shutdown must encode");
+        let back: GuiRequest = serde_json::from_slice(&frame[4..]).unwrap();
+        assert!(matches!(back, GuiRequest::Shutdown));
     }
 }

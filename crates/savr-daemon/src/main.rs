@@ -95,8 +95,9 @@ async fn main() -> anyhow::Result<()> {
         let engine = engine.clone();
         let path = ipc_endpoint.clone();
         let rx = shutdown_rx.clone();
+        let tx = shutdown_tx.clone();
         tasks.push(tokio::spawn(async move {
-            if let Err(e) = ipc::run_ipc_server(engine, path, rx).await {
+            if let Err(e) = ipc::run_ipc_server(engine, path, rx, tx).await {
                 tracing::error!("ipc server error: {e}");
             }
         }));
@@ -165,8 +166,14 @@ async fn main() -> anyhow::Result<()> {
         shutdown_rx.clone(),
     )));
 
-    // Block until Ctrl-C / SIGINT, then signal every task and drain.
-    tokio::signal::ctrl_c().await?;
+    // Block until Ctrl-C / SIGINT *or* an IPC `Shutdown` trips the channel (the
+    // app sends that before an update relaunch), then signal every task and
+    // drain so nothing is left orphaned holding the socket.
+    let mut shutdown_rx = shutdown_rx.clone();
+    tokio::select! {
+        res = tokio::signal::ctrl_c() => { res?; }
+        _ = shutdown_rx.changed() => {}
+    }
     tracing::info!("shutdown requested");
     let _ = shutdown_tx.send(true);
     for task in tasks {

@@ -7,6 +7,7 @@
 
 use savr_core::ipc::{DaemonMsg, DaemonStatus, GuiRequest, ResolveChoice, Root, RootSpec};
 use savr_core::types::{Game, GameId, SyncedConfig, Version, VersionId};
+use tauri::Manager;
 use uuid::Uuid;
 
 use crate::error::CmdError;
@@ -97,6 +98,23 @@ pub async fn get_status() -> Result<DaemonStatus, CmdError> {
 #[tauri::command]
 pub async fn set_autostart(enabled: bool) -> Result<(), CmdError> {
     expect_ok(request(GuiRequest::SetAutostart { enabled }).await?)
+}
+
+/// Tear everything down before an update relaunch, then restart the app so a
+/// fresh process + fresh daemon replace the old ones. No stale binary keeps
+/// serving old code after an in-app update (which produced confusing "already
+/// updated but old behavior" errors). `restart` diverges, so this never returns.
+#[tauri::command]
+pub async fn restart_for_update(app: tauri::AppHandle) {
+    // Ask whatever daemon is listening to exit — this reaches a login-started
+    // headless daemon the app merely adopted, not just a sidecar we spawned.
+    // Ignore the result: the daemon drops the connection as it drains, and
+    // we're restarting regardless of whether the ack lands.
+    let _ = request(GuiRequest::Shutdown).await;
+    // Belt-and-suspenders for the sidecar case: kill our own child if the IPC
+    // request didn't reach it (e.g. the daemon was already wedged).
+    app.state::<crate::daemon::Supervisor>().shutdown();
+    app.restart();
 }
 
 #[tauri::command]

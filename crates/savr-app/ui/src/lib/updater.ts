@@ -4,7 +4,7 @@
 // from under the user.
 import { check } from "@tauri-apps/plugin-updater";
 import { ask, message } from "@tauri-apps/plugin-dialog";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface UpdateOutcome {
   status: "up-to-date" | "declined" | "installed" | "error";
@@ -26,20 +26,17 @@ export async function checkForUpdates(
     }
 
     const proceed = await ask(
-      `Version ${update.version} is available.\n\nDownload and install it now?`,
-      { title: "Update available", kind: "info", okLabel: "Install", cancelLabel: "Later" },
+      `Version ${update.version} is available.\n\nSavr will install it and restart to finish. Continue?`,
+      { title: "Update available", kind: "info", okLabel: "Update & restart", cancelLabel: "Later" },
     );
     if (!proceed) return { status: "declined", version: update.version };
 
     await update.downloadAndInstall();
 
-    const restartNow = await ask(
-      "Update installed. Restart Savr now to finish?",
-      { title: "Restart Savr", kind: "info", okLabel: "Restart", cancelLabel: "Not now" },
-    );
-    if (restartNow) {
-      await relaunch();
-    }
+    // Full clean teardown (app + daemon) then relaunch, so no stale process
+    // survives the update and serves old code. This never returns — the app
+    // exits and a fresh instance takes over.
+    await invoke("restart_for_update");
     return { status: "installed", version: update.version };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);

@@ -39,11 +39,14 @@ pub async fn is_listening(path: &str) -> bool {
     Stream::connect(name).await.is_ok()
 }
 
-/// Run the IPC listener until `shutdown` flips to `true`.
+/// Run the IPC listener until `shutdown` flips to `true`. `shutdown_tx` is
+/// handed to each connection so a `Shutdown` request can trip the same channel
+/// and drain the whole daemon (used by the app's update relaunch).
 pub async fn run_ipc_server(
     engine: Arc<Engine>,
     path: String,
     mut shutdown: watch::Receiver<bool>,
+    shutdown_tx: watch::Sender<bool>,
 ) -> anyhow::Result<()> {
     // Never unlink and steal a socket a live daemon still owns. `main` already
     // refuses to start a second instance; this is belt-and-braces for the case
@@ -78,8 +81,9 @@ pub async fn run_ipc_server(
                 match conn {
                     Ok(stream) => {
                         let engine = engine.clone();
+                        let shutdown_tx = shutdown_tx.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = serve_connection(engine, stream).await {
+                            if let Err(e) = serve_connection(engine, stream, shutdown_tx).await {
                                 tracing::debug!("ipc connection ended: {e}");
                             }
                         });
@@ -108,7 +112,11 @@ fn socket_name(path: &str) -> std::io::Result<Name<'_>> {
 /// Serve one client connection: dispatch requests and stream events until the
 /// client disconnects. Generic over the transport so tests can use
 /// `tokio::io::duplex`.
-pub async fn serve_connection<S>(engine: Arc<Engine>, stream: S) -> std::io::Result<()>
+pub async fn serve_connection<S>(
+    engine: Arc<Engine>,
+    stream: S,
+    shutdown_tx: watch::Sender<bool>,
+) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -173,6 +181,15 @@ where
         let Some(req) = req else {
             break; // clean EOF at a frame boundary
         };
+        // Shutdown drains the whole daemon, not just this connection: ack it,
+        // then trip the shared watch channel so `main` and every task exit and
+        // the socket is freed for a fresh instance after an update.
+        if matches!(req, GuiRequest::Shutdown) {
+            tracing::info!("shutdown requested via ipc");
+            let _ = out_tx.send(DaemonMsg::Ok).await;
+            let _ = shutdown_tx.send(true);
+            break;
+        }
         let reply = engine.handle_request(req).await;
         if out_tx.send(reply).await.is_err() {
             break;

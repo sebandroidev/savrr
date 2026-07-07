@@ -2,6 +2,14 @@
 
 Notable changes to Savrr. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions aim for [semantic versioning](https://semver.org/spec/v2.0.0.html) once past 1.0.
 
+## [0.1.9] - 2026-07-07
+
+Updating leaves nothing stale behind.
+
+### Fixed
+
+- Installing an update now shuts Savr down completely — the app and the background daemon both — and restarts fresh, instead of leaving an old process running against the new files. That lingering process was the cause of confusing "I already updated but it's still doing the old thing" errors. This also covers the case where the daemon runs headless from Windows sign-in: the update stops that one too, so it can't outlive the app it was updated alongside.
+
 ## [0.1.8] - 2026-07-07
 
 Turning on "Start on Windows sign-in" works.
@@ -106,6 +114,7 @@ The first working slice of the whole system: shared core, server, headless daemo
 
 - An adversarial code review before release fixed a device-revocation gap (a revoked device kept its WebSocket), an offline-differential backup inconsistency, a config-sync tag drop, and a device-state oracle on `/auth/refresh`. Remaining known issues are tracked in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
+[0.1.9]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.9
 [0.1.8]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.8
 [0.1.7]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.7
 [0.1.6]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.6

@@ -376,6 +376,9 @@ impl Engine {
                 Ok(()) => DaemonMsg::Ok,
                 Err(e) => err(e),
             },
+            // Shutdown is intercepted in serve_connection (it drains the whole
+            // daemon, not just answers a reply), so it never reaches dispatch.
+            GuiRequest::Shutdown => DaemonMsg::Ok,
         }
     }
 
