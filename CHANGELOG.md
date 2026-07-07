@@ -2,6 +2,19 @@
 
 Notable changes to Savrr. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions aim for [semantic versioning](https://semver.org/spec/v2.0.0.html) once past 1.0.
 
+## [0.1.7] - 2026-07-07
+
+Steam Cloud saves get backed up, and Savr can run at sign-in.
+
+### Added
+
+- Savr now backs up Steam Cloud saves — the ones Steam keeps under `userdata`. Games like Dead Cells that store their saves there (and thousands of others) are now captured instead of being silently skipped.
+- A new setting, "Start on Windows sign-in," runs Savr in the background at login with no window. Your games are detected and saved even when you're in Xbox Full Screen mode and never open the app.
+
+### Fixed
+
+- The background daemon now keeps its own log file, so problems can be diagnosed even when it runs headless with no console.
+
 ## [0.1.6] - 2026-07-06
 
 See at a glance whether Savr is watching your games.
@@ -85,6 +98,7 @@ The first working slice of the whole system: shared core, server, headless daemo
 
 - An adversarial code review before release fixed a device-revocation gap (a revoked device kept its WebSocket), an offline-differential backup inconsistency, a config-sync tag drop, and a device-state oracle on `/auth/refresh`. Remaining known issues are tracked in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
+[0.1.7]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.7
 [0.1.6]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.6
 [0.1.5]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.5
 [0.1.4]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.4

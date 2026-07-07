@@ -435,10 +435,11 @@ impl LocalState {
 
     /// All play stats, keyed by game, for overlaying onto the games list.
     pub async fn play_stats(&self) -> anyhow::Result<HashMap<GameId, PlayStat>> {
-        let rows =
-            sqlx::query("SELECT game_id, last_played, last_session_secs, total_secs FROM play_stats")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query(
+            "SELECT game_id, last_played, last_session_secs, total_secs FROM play_stats",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         let mut out = HashMap::new();
         for row in rows {
             let Ok(id) = Uuid::parse_str(&row.get::<String, _>("game_id")) else {
@@ -571,7 +572,10 @@ mod tests {
 
         // One 90s session records duration, total, and last_played.
         state.play_start(gid, t0).await.unwrap();
-        state.play_stop(gid, t0 + Duration::seconds(90)).await.unwrap();
+        state
+            .play_stop(gid, t0 + Duration::seconds(90))
+            .await
+            .unwrap();
         let s = state.play_stats().await.unwrap();
         let p = s.get(&gid).unwrap();
         assert_eq!(p.total_secs, 90);
@@ -581,7 +585,10 @@ mod tests {
         // A second 60s session adds to the total and replaces last session.
         let t1 = t0 + Duration::seconds(3600);
         state.play_start(gid, t1).await.unwrap();
-        state.play_stop(gid, t1 + Duration::seconds(60)).await.unwrap();
+        state
+            .play_stop(gid, t1 + Duration::seconds(60))
+            .await
+            .unwrap();
         let s = state.play_stats().await.unwrap();
         let p = s.get(&gid).unwrap();
         assert_eq!(p.total_secs, 150);
@@ -602,7 +609,10 @@ mod tests {
         let g3 = Uuid::now_v7();
         state.play_start(g3, t0).await.unwrap();
         state.close_orphaned_sessions().await.unwrap();
-        state.play_stop(g3, t0 + Duration::seconds(9999)).await.unwrap();
+        state
+            .play_stop(g3, t0 + Duration::seconds(9999))
+            .await
+            .unwrap();
         let s = state.play_stats().await.unwrap();
         let p = s.get(&g3).unwrap();
         assert_eq!(p.total_secs, 0);
