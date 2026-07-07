@@ -10,7 +10,7 @@ use savr_core::manifest::{self, Roots};
 use savr_core::types::Os;
 use savr_core::{Game, PathOverride};
 
-use crate::detection::steam::SteamLibrary;
+use crate::detection::steam::{steam_account_ids, SteamLibrary};
 
 /// The resolved, ready-to-glob save locations for one game.
 #[derive(Debug, Clone)]
@@ -104,8 +104,13 @@ pub fn resolve_game(game: &Game, overrides: &[PathOverride], ctx: &ResolveContex
     }
 
     for tpl in templates {
-        if let Some(r) = manifest::resolve(tpl, ctx.roots, base.as_deref()) {
-            push_unique(&mut patterns, r);
+        // Fill Steam's <root> / <storeUserId> (cloud userdata saves) that core
+        // resolve can't — one concrete template per (library root, signed-in
+        // account). A template with neither placeholder passes through unchanged.
+        for concrete in expand_steam_placeholders(tpl, ctx.steam_libs) {
+            if let Some(r) = manifest::resolve(&concrete, ctx.roots, base.as_deref()) {
+                push_unique(&mut patterns, r);
+            }
         }
         for pr in &proton {
             if let Some(r) = manifest::resolve(tpl, pr, base.as_deref()) {
@@ -120,6 +125,38 @@ pub fn resolve_game(game: &Game, overrides: &[PathOverride], ctx: &ResolveContex
         registry_keys,
         anchor,
     }
+}
+
+/// Expand Steam store placeholders (`<root>`, `<storeUserId>`) that
+/// `manifest::resolve` leaves untouched, yielding one concrete template per
+/// (Steam library root, signed-in account). A template with neither placeholder
+/// returns unchanged. When a placeholder can't be filled — no Steam libraries,
+/// or `<storeUserId>` but no accounts under any `userdata/` — it yields nothing,
+/// so the target is skipped (same contract as `resolve` returning `None`).
+fn expand_steam_placeholders(tpl: &str, steam_libs: &[SteamLibrary]) -> Vec<String> {
+    let needs_root = tpl.contains("<root>");
+    let needs_uid = tpl.contains("<storeUserId>");
+    if !needs_root && !needs_uid {
+        return vec![tpl.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    for lib in steam_libs {
+        let root = lib.path.to_string_lossy();
+        if needs_uid {
+            // Accounts live under the *main* Steam root's userdata; secondary
+            // libraries simply return none, so they contribute nothing here.
+            for uid in steam_account_ids(&lib.userdata_dir()) {
+                let mut s = tpl.to_string();
+                if needs_root {
+                    s = s.replace("<root>", &root);
+                }
+                push_unique(&mut out, s.replace("<storeUserId>", &uid));
+            }
+        } else {
+            push_unique(&mut out, tpl.replace("<root>", &root));
+        }
+    }
+    out
 }
 
 fn push_unique(v: &mut Vec<String>, s: String) {
@@ -247,6 +284,55 @@ mod tests {
     fn empty_patterns_anchor_home() {
         let roots = test_roots();
         assert_eq!(compute_anchor(&[], &roots), roots.home);
+    }
+
+    #[test]
+    fn expands_steam_root_and_user_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // One signed-in account plus noise that must be ignored.
+        std::fs::create_dir_all(root.join("userdata/76561198000000000/588650/remote")).unwrap();
+        std::fs::create_dir_all(root.join("userdata/0")).unwrap();
+        let libs = vec![SteamLibrary {
+            path: root.to_path_buf(),
+            games: vec![],
+        }];
+
+        // <root> + <storeUserId> -> one concrete template for the real account.
+        let got = expand_steam_placeholders(
+            "<root>/userdata/<storeUserId>/588650/remote/user_*.dat",
+            &libs,
+        );
+        assert_eq!(
+            got,
+            vec![format!(
+                "{}/userdata/76561198000000000/588650/remote/user_*.dat",
+                root.display()
+            )]
+        );
+
+        // <root> only -> per library, no account needed.
+        assert_eq!(
+            expand_steam_placeholders("<root>/steamapps/common/Foo/save", &libs),
+            vec![format!("{}/steamapps/common/Foo/save", root.display())]
+        );
+
+        // No store placeholder -> unchanged, single entry.
+        assert_eq!(
+            expand_steam_placeholders("<base>/save/x", &libs),
+            vec!["<base>/save/x".to_string()]
+        );
+
+        // <storeUserId> but no accounts anywhere -> yields nothing (skipped).
+        let empty = tempfile::tempdir().unwrap();
+        let no_accounts = vec![SteamLibrary {
+            path: empty.path().to_path_buf(),
+            games: vec![],
+        }];
+        assert!(
+            expand_steam_placeholders("<root>/userdata/<storeUserId>/1/remote", &no_accounts)
+                .is_empty()
+        );
     }
 
     fn test_roots() -> Roots {

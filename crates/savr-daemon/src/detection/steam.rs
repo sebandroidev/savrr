@@ -44,6 +44,30 @@ impl SteamLibrary {
             .join("pfx")
             .join("drive_c")
     }
+
+    /// The `userdata` dir under this root, where Steam keeps per-account cloud
+    /// saves (`userdata/<accountId>/<appid>/remote/`). Only the main Steam
+    /// install root normally has one — secondary library folders don't — so
+    /// callers treat a missing dir as "no accounts here".
+    pub fn userdata_dir(&self) -> PathBuf {
+        self.path.join("userdata")
+    }
+}
+
+/// Numeric Steam account-id subdirectories under a `userdata` dir — the values
+/// `<storeUserId>` resolves to, one per Steam account that has signed in on this
+/// machine. Non-numeric entries (`ac`, `config`, …) and the placeholder `0` are
+/// skipped. Returns empty if the dir is missing/unreadable.
+pub fn steam_account_ids(userdata: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(userdata) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n != "0" && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        .collect()
 }
 
 /// A parsed KeyValues node: either a leaf string or a nested object. Order is
@@ -552,5 +576,21 @@ mod tests {
     fn handles_escapes() {
         let kv = parse(r#""k" "a\\b\"c""#).unwrap();
         assert_eq!(kv.get("k").and_then(Kv::as_str), Some(r#"a\b"c"#));
+    }
+
+    #[test]
+    fn steam_account_ids_keeps_only_numeric_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let ud = dir.path().join("userdata");
+        for name in ["76561198000000000", "0", "config", "ac"] {
+            std::fs::create_dir_all(ud.join(name)).unwrap();
+        }
+        // A numeric-looking *file* must not count (only account dirs).
+        std::fs::write(ud.join("999"), b"x").unwrap();
+        let mut ids = steam_account_ids(&ud);
+        ids.sort();
+        assert_eq!(ids, vec!["76561198000000000".to_string()]);
+        // Missing userdata dir -> no accounts, no panic.
+        assert!(steam_account_ids(&dir.path().join("nope")).is_empty());
     }
 }
