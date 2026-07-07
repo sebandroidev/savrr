@@ -372,6 +372,10 @@ impl Engine {
                 code,
                 device_name,
             } => self.pair(&server_url, &code, &device_name).await,
+            GuiRequest::SetAutostart(on) => match crate::autostart::set(on) {
+                Ok(()) => DaemonMsg::Ok,
+                Err(e) => err(e),
+            },
         }
     }
 
@@ -531,6 +535,7 @@ impl Engine {
                 || self.client.is_authenticated().await,
             last_backup_at,
             pending_outbox,
+            autostart_enabled: crate::autostart::is_enabled(),
         })
     }
 

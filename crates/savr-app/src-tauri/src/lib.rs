@@ -118,6 +118,7 @@ pub fn run() {
             commands::restore,
             commands::resolve_conflict,
             commands::get_status,
+            commands::set_autostart,
             commands::get_config,
             commands::update_config,
             commands::enter_learn_mode,

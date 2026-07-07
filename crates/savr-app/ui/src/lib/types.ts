@@ -76,6 +76,7 @@ export interface DaemonStatus {
   server_connected: boolean;
   last_backup_at: IsoDateTime | null;
   pending_outbox: number;
+  autostart_enabled: boolean;
 }
 
 export interface Retention {

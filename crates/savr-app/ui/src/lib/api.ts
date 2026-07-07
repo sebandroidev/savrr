@@ -35,6 +35,9 @@ export const resolveConflict = (gameId: Uuid, choice: ResolveChoice) =>
 
 export const getStatus = () => invoke<DaemonStatus>("get_status");
 
+export const setAutostart = (enabled: boolean) =>
+  invoke<void>("set_autostart", { enabled });
+
 export const getConfig = () => invoke<SyncedConfig>("get_config");
 
 export const updateConfig = (config: SyncedConfig) =>

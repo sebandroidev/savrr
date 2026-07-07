@@ -38,6 +38,9 @@ tracing = { workspace = true }
 anyhow = "1"
 toml = "0.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# File logging so a headless (login-started, no-console) daemon is still
+# diagnosable when its stdout goes nowhere.
+tracing-appender = "0.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "stream",
@@ -64,6 +67,8 @@ keyring = { version = "3", features = ["apple-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# HKCU\...\Run entry for "start the daemon on login" (no admin needed).
+winreg = "0.52"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }

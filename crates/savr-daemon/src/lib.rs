@@ -9,6 +9,7 @@
 //! Everything lives in a library so integration tests can drive the engine and
 //! the IPC frame dispatcher in-process; `main.rs` is a thin task launcher.
 
+pub mod autostart;
 pub mod backup;
 pub mod client;
 pub mod config;

@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getConfig, updateConfig } from "../lib/api";
+  import {
+    getConfig,
+    updateConfig,
+    getStatus,
+    setAutostart,
+  } from "../lib/api";
   import type {
     SyncedConfig,
     ConflictPolicy,
@@ -35,11 +40,14 @@
   let daemonDown = $state(false);
   let saving = $state(false);
   let checking = $state(false);
+  let autostart = $state(false);
+  let autostartBusy = $state(false);
 
   async function load() {
     loading = true;
     try {
       config = await getConfig();
+      autostart = (await getStatus()).autostart_enabled;
       error = null;
       daemonDown = false;
     } catch (e) {
@@ -71,6 +79,24 @@
       else if (r.status === "installed") notify.success(`Installed v${r.version}.`);
     } finally {
       checking = false;
+    }
+  }
+
+  async function toggleAutostart() {
+    autostartBusy = true;
+    const next = !autostart;
+    try {
+      await setAutostart(next);
+      autostart = next;
+      notify.success(
+        next
+          ? "Savr will start in the background when you sign in to Windows."
+          : "Savr will no longer start on sign-in.",
+      );
+    } catch (e) {
+      notify.error(errorMessage(e));
+    } finally {
+      autostartBusy = false;
     }
   }
 
@@ -136,6 +162,26 @@
 
   <div class="card section">
     <h2>Application</h2>
+    <div class="app-row">
+      <div>
+        <div class="app-title">Start on Windows sign-in</div>
+        <div class="dim">
+          Runs Savr in the background at login — no window — so games are
+          detected and saves backed up even in Xbox Full Screen mode.
+        </div>
+      </div>
+      <button
+        onclick={toggleAutostart}
+        disabled={autostartBusy}
+        class:primary={!autostart}
+      >
+        {#if autostartBusy}<Spinner size={14} />{:else}<Icon
+            name={autostart ? "check" : "play"}
+            size={15}
+          />{/if}
+        {autostart ? "Turn off" : "Turn on"}
+      </button>
+    </div>
     <div class="app-row">
       <div>
         <div class="app-title">Software updates</div>

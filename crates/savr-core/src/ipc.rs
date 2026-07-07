@@ -51,6 +51,10 @@ pub struct DaemonStatus {
     pub server_connected: bool,
     pub last_backup_at: Option<DateTime<Utc>>,
     pub pending_outbox: u32,
+    /// Whether the daemon is registered to start on OS login (Windows only;
+    /// always false elsewhere). Defaulted so older payloads still deserialize.
+    #[serde(default)]
+    pub autostart_enabled: bool,
 }
 
 /// Engine events streamed to the GUI live feed (PRD-02 §5): raw detection edges
@@ -130,6 +134,8 @@ pub enum GuiRequest {
         code: String,
         device_name: String,
     },
+    /// Register (or unregister) the daemon to start on OS login. Windows only.
+    SetAutostart(bool),
 }
 
 // Adjacently tagged (`content = "data"`), not internally tagged: the newtype

@@ -4,12 +4,17 @@
 //! daily manifest refresh — over one tokio runtime with graceful shutdown
 //! (PRD-07 §2). All real logic lives in the library modules.
 
+// Windows release builds run without a console window so the login-started
+// daemon is truly headless. Debug keeps the console for `cargo run`.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
+use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 use savr_daemon::config::{config_root, data_root, DaemonConfig};
@@ -28,9 +33,22 @@ fn db_path() -> PathBuf {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+    // Log to a daily file as well as stdout: a login-started daemon has no
+    // console, so the file is its only record; the app's supervisor still reads
+    // stdout when it runs the daemon as a sidecar. `_log_guard` must live for the
+    // whole program — it flushes the non-blocking writer on drop.
+    let log_dir = data_root().join("logs");
+    std::fs::create_dir_all(&log_dir).ok();
+    let (file_writer, _log_guard) =
+        tracing_appender::non_blocking(tracing_appender::rolling::daily(&log_dir, "daemon.log"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stdout))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(file_writer),
         )
         .init();
 
