@@ -96,7 +96,7 @@ pub async fn get_status() -> Result<DaemonStatus, CmdError> {
 /// Register (or unregister) the daemon to start on Windows login (headless).
 #[tauri::command]
 pub async fn set_autostart(enabled: bool) -> Result<(), CmdError> {
-    expect_ok(request(GuiRequest::SetAutostart(enabled)).await?)
+    expect_ok(request(GuiRequest::SetAutostart { enabled }).await?)
 }
 
 #[tauri::command]

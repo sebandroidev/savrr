@@ -135,7 +135,11 @@ pub enum GuiRequest {
         device_name: String,
     },
     /// Register (or unregister) the daemon to start on OS login. Windows only.
-    SetAutostart(bool),
+    /// A struct variant (not `SetAutostart(bool)`): serde's internal tagging
+    /// can't serialize a newtype variant wrapping a bare primitive.
+    SetAutostart {
+        enabled: bool,
+    },
 }
 
 // Adjacently tagged (`content = "data"`), not internally tagged: the newtype
@@ -285,5 +289,15 @@ mod tests {
         // Clean EOF at frame boundary -> None, not an error.
         let eof: Option<GuiRequest> = read_frame(&mut cursor).await.unwrap();
         assert!(eof.is_none());
+    }
+
+    #[test]
+    fn set_autostart_encodes() {
+        // Regression: an internally-tagged newtype wrapping a bare primitive
+        // (`SetAutostart(bool)`) fails to serialize — it must be a struct variant.
+        let req = GuiRequest::SetAutostart { enabled: true };
+        let frame = encode_frame(&req).expect("SetAutostart must encode");
+        let back: GuiRequest = serde_json::from_slice(&frame[4..]).unwrap();
+        assert!(matches!(back, GuiRequest::SetAutostart { enabled: true }));
     }
 }

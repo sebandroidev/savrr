@@ -372,7 +372,7 @@ impl Engine {
                 code,
                 device_name,
             } => self.pair(&server_url, &code, &device_name).await,
-            GuiRequest::SetAutostart(on) => match crate::autostart::set(on) {
+            GuiRequest::SetAutostart { enabled } => match crate::autostart::set(enabled) {
                 Ok(()) => DaemonMsg::Ok,
                 Err(e) => err(e),
             },
