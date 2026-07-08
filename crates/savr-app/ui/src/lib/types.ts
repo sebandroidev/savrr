@@ -68,6 +68,14 @@ export interface RootSpec {
   path: string;
 }
 
+export interface CustomGameSpec {
+  title: string;
+  install_path: string | null;
+  save_root: string;
+  include: string[];
+  exclude: string[];
+}
+
 export interface DaemonStatus {
   version: string;
   uptime_s: number;

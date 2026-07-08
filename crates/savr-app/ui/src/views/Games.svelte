@@ -7,6 +7,8 @@
     backupNow,
     restore,
     enterLearnMode,
+    addRoot,
+    removeCustomGame,
   } from "../lib/api";
   import type { Game, Version } from "../lib/types";
   import { errorMessage, isDaemonDown } from "../lib/types";
@@ -18,9 +20,10 @@
     shortId,
   } from "../lib/format";
   import { notify } from "../lib/toasts";
-  import { confirm } from "@tauri-apps/plugin-dialog";
+  import { confirm, open } from "@tauri-apps/plugin-dialog";
   import Icon from "../components/Icon.svelte";
   import Spinner from "../components/Spinner.svelte";
+  import AddGameDialog from "./AddGameDialog.svelte";
 
   let games = $state<Game[]>([]);
   let loading = $state(true);
@@ -32,6 +35,9 @@
   let versionsLoading = $state(false);
   let versionsError = $state<string | null>(null);
   let busyId = $state<string | null>(null);
+
+  let addingFolder = $state(false);
+  let showAddGame = $state(false);
 
   async function loadGames() {
     loading = true;
@@ -115,6 +121,43 @@
     }
   }
 
+  async function addGameFolder() {
+    const dir = await open({
+      directory: true,
+      title: "Pick a folder that contains your games",
+    });
+    if (typeof dir !== "string") return;
+    addingFolder = true;
+    try {
+      await addRoot({ kind: "drive", path: dir });
+      notify.success("Game folder added.");
+      await loadGames();
+    } catch (e) {
+      notify.error(errorMessage(e));
+    } finally {
+      addingFolder = false;
+    }
+  }
+
+  async function removeGame(game: Game) {
+    const ok = await confirm(
+      `Remove ${game.title} from Savr?\n\nThis won't delete any saves already backed up.`,
+      { title: "Remove game", kind: "warning", okLabel: "Remove" },
+    );
+    if (!ok) return;
+    busyId = game.id;
+    try {
+      await removeCustomGame(game.title);
+      notify.success(`${game.title} removed.`);
+      if (selected?.id === game.id) selected = null;
+      await loadGames();
+    } catch (e) {
+      notify.error(errorMessage(e));
+    } finally {
+      busyId = null;
+    }
+  }
+
   onMount(() => {
     loadGames();
     // The daemon builds its catalog after a slow startup manifest fetch, so the
@@ -132,10 +175,29 @@
     <h1>Games</h1>
     <p class="muted">Everything Savr is watching, with full version history.</p>
   </div>
-  <button class="ghost sm" onclick={loadGames} disabled={loading}>
-    <Icon name="refresh" size={15} /> Refresh
-  </button>
+  <div class="head-actions">
+    <button class="sm" onclick={addGameFolder} disabled={addingFolder}>
+      {#if addingFolder}<Spinner size={14} />{:else}<Icon name="roots" size={15} />{/if}
+      Add game folder
+    </button>
+    <button class="sm" onclick={() => (showAddGame = true)}>
+      <Icon name="plus" size={15} /> Add game
+    </button>
+    <button class="ghost sm" onclick={loadGames} disabled={loading}>
+      <Icon name="refresh" size={15} /> Refresh
+    </button>
+  </div>
 </div>
+
+{#if showAddGame}
+  <AddGameDialog
+    onSaved={() => {
+      showAddGame = false;
+      loadGames();
+    }}
+    onClose={() => (showAddGame = false)}
+  />
+{/if}
 
 {#if loading && games.length === 0}
   <div class="card center"><Spinner size={22} /></div>
@@ -156,22 +218,34 @@
     <ul class="list">
       {#each games as game (game.id)}
         <li>
-          <button
-            class="row-btn"
-            class:active={selected?.id === game.id}
-            onclick={() => select(game)}
-          >
-            <span class="title">{game.title}</span>
-            <span class="meta">
-              <span class="badge">{game.source}</span>
-              {#if game.steam_appid}<span class="dim mono">#{game.steam_appid}</span>{/if}
-              {#if game.running}
-                <span class="badge live"><span class="pulse"></span>Playing</span>
-              {:else if game.last_played}
-                <span class="dim">Played {formatRelative(game.last_played)}</span>
-              {/if}
-            </span>
-          </button>
+          <div class="row-wrap">
+            <button
+              class="row-btn"
+              class:active={selected?.id === game.id}
+              onclick={() => select(game)}
+            >
+              <span class="title">{game.title}</span>
+              <span class="meta">
+                <span class="badge">{game.source}</span>
+                {#if game.steam_appid}<span class="dim mono">#{game.steam_appid}</span>{/if}
+                {#if game.running}
+                  <span class="badge live"><span class="pulse"></span>Playing</span>
+                {:else if game.last_played}
+                  <span class="dim">Played {formatRelative(game.last_played)}</span>
+                {/if}
+              </span>
+            </button>
+            {#if game.source === "Custom"}
+              <button
+                class="danger sm remove-btn"
+                onclick={() => removeGame(game)}
+                disabled={busyId === game.id}
+                aria-label={`Remove ${game.title}`}
+              >
+                {#if busyId === game.id}<Spinner size={13} />{:else}<Icon name="trash" size={13} />{/if}
+              </button>
+            {/if}
+          </div>
         </li>
       {/each}
     </ul>
@@ -283,6 +357,21 @@
     margin: 4px 0 0;
     font-size: 13px;
   }
+  .head-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .row-wrap {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+  }
+  .remove-btn {
+    flex-shrink: 0;
+    align-self: center;
+    padding: 6px 8px;
+  }
   .split {
     display: grid;
     grid-template-columns: minmax(220px, 300px) 1fr;
@@ -301,7 +390,8 @@
     gap: 2px;
   }
   .row-btn {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     text-align: left;
     background: transparent;
     border: 1px solid transparent;

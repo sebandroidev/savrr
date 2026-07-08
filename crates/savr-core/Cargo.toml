@@ -28,3 +28,4 @@ ipc = ["dep:tokio"]
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "io-util"] }
+tempfile = "3"

@@ -53,6 +53,15 @@ CREATE TABLE IF NOT EXISTS play_stats (
     last_session_secs INTEGER,
     total_secs        INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS custom_games (
+    norm_title   TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    install_path TEXT,
+    save_root    TEXT NOT NULL,
+    include_glob TEXT NOT NULL,
+    exclude_glob TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
 "#;
 
 /// Last snapshot stored for a game, plus the version this device last synced.
@@ -71,6 +80,17 @@ pub struct PlayStat {
     pub last_played: Option<DateTime<Utc>>,
     pub last_session_secs: Option<i64>,
     pub total_secs: i64,
+}
+
+/// A hand-registered game not in any Steam library. Persisted because — unlike
+/// Steam/auto-detected games — it can't be re-derived from a scan.
+#[derive(Debug, Clone)]
+pub struct CustomGame {
+    pub title: String,
+    pub install_path: Option<String>,
+    pub save_root: String,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
 }
 
 /// A queued upload awaiting a reachable server (PRD-03 §8).
@@ -484,6 +504,79 @@ impl LocalState {
     pub async fn set_last_backup_at(&self, at: DateTime<Utc>) -> anyhow::Result<()> {
         self.set_meta("last_backup_at", &at.to_rfc3339()).await
     }
+
+    // ---- custom_games ----
+
+    pub async fn add_custom_game(&self, g: &CustomGame) -> anyhow::Result<()> {
+        let norm = crate::naming::normalize_title(&g.title);
+        anyhow::ensure!(
+            !norm.is_empty(),
+            "game title must contain letters or digits"
+        );
+        // Pre-check for a clear, deterministic duplicate message instead of
+        // leaking the raw SQL error (e.g. "UNIQUE constraint failed") up to
+        // the GUI. A genuine DB error on the insert itself still surfaces
+        // distinctly below.
+        let existing: Option<String> =
+            sqlx::query_scalar("SELECT norm_title FROM custom_games WHERE norm_title = ?")
+                .bind(&norm)
+                .fetch_optional(&self.pool)
+                .await?;
+        anyhow::ensure!(
+            existing.is_none(),
+            "a game named '{}' is already added",
+            g.title
+        );
+        sqlx::query(
+            "INSERT INTO custom_games \
+             (norm_title, title, install_path, save_root, include_glob, exclude_glob) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&norm)
+        .bind(&g.title)
+        .bind(&g.install_path)
+        .bind(&g.save_root)
+        .bind(g.include.join("\n"))
+        .bind(g.exclude.join("\n"))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("could not add '{}': {e}", g.title))?;
+        Ok(())
+    }
+
+    pub async fn list_custom_games(&self) -> anyhow::Result<Vec<CustomGame>> {
+        let rows = sqlx::query(
+            "SELECT title, install_path, save_root, include_glob, exclude_glob \
+             FROM custom_games ORDER BY title",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let split = |s: String| -> Vec<String> {
+            s.lines()
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(CustomGame {
+                title: r.get::<String, _>("title"),
+                install_path: r.get::<Option<String>, _>("install_path"),
+                save_root: r.get::<String, _>("save_root"),
+                include: split(r.get::<String, _>("include_glob")),
+                exclude: split(r.get::<String, _>("exclude_glob")),
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn remove_custom_game(&self, norm_title: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM custom_games WHERE norm_title = ?")
+            .bind(norm_title)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 fn root_kind_str(kind: RootKind) -> &'static str {
@@ -617,5 +710,38 @@ mod tests {
         let p = s.get(&g3).unwrap();
         assert_eq!(p.total_secs, 0);
         assert_eq!(p.last_session_secs, None);
+    }
+
+    #[tokio::test]
+    async fn custom_games_roundtrip() {
+        let state = LocalState::open_memory().await.unwrap();
+        let g = CustomGame {
+            title: "My Cracked Game".to_string(),
+            install_path: Some("D:/Games/MyGame".to_string()),
+            save_root: "D:/Saves/MyGame".to_string(),
+            include: vec!["**/*.sav".to_string()],
+            exclude: vec!["logs/**".to_string()],
+        };
+        state.add_custom_game(&g).await.unwrap();
+
+        // Duplicate normalized title is rejected with a clean message (no
+        // raw SQL error leaking through).
+        let err = state.add_custom_game(&g).await.unwrap_err();
+        assert!(
+            err.to_string().contains("already"),
+            "unexpected error message: {err}"
+        );
+
+        let all = state.list_custom_games().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].title, "My Cracked Game");
+        assert_eq!(all[0].include, vec!["**/*.sav".to_string()]);
+        assert_eq!(all[0].exclude, vec!["logs/**".to_string()]);
+
+        state
+            .remove_custom_game(&crate::naming::normalize_title("my cracked game"))
+            .await
+            .unwrap();
+        assert!(state.list_custom_games().await.unwrap().is_empty());
     }
 }

@@ -23,6 +23,7 @@ pub struct BackupJob {
     pub patterns: Vec<String>,
     pub anchor: PathBuf,
     pub registry_keys: Vec<String>,
+    pub excludes: Vec<String>,
 }
 
 /// What a backup run did.
@@ -67,7 +68,7 @@ pub async fn run_backup(
     if job.patterns.is_empty() && job.registry_keys.is_empty() {
         return Ok(BackupOutcome::NoChange);
     }
-    let new_snapshot = Snapshot::build(job.game_id, &job.patterns, &job.anchor)?;
+    let new_snapshot = Snapshot::build(job.game_id, &job.patterns, &job.excludes, &job.anchor)?;
     let last = state.get_snapshot(job.game_id).await?;
     let parent = last.as_ref().and_then(|s| s.local_head);
 
@@ -398,7 +399,7 @@ mod tests {
         let pattern = format!("{}/**/*", saves.display());
 
         // Snapshot.
-        let snap = Snapshot::build(game, std::slice::from_ref(&pattern), &anchor).unwrap();
+        let snap = Snapshot::build(game, std::slice::from_ref(&pattern), &[], &anchor).unwrap();
         assert_eq!(snap.files.len(), 2);
 
         // Diff vs empty → everything changed (a full).
@@ -457,6 +458,7 @@ mod tests {
             patterns: vec![format!("{}/**/*", saves.display())],
             anchor: work.path().to_path_buf(),
             registry_keys: vec![],
+            excludes: vec![],
         };
         let cache = work.path().join("cache");
 
@@ -492,13 +494,14 @@ mod tests {
             patterns: vec![format!("{}/**/*", saves.display())],
             anchor: anchor.clone(),
             registry_keys: vec![],
+            excludes: vec![],
         };
         let cache = work.path().join("cache");
 
         // Simulate a prior CONFIRMED backup at head_a whose content is v1, so the
         // first offline backup below is a legitimate differential from head_a.
         let head_a = Uuid::now_v7();
-        let base = Snapshot::build(game, &job.patterns, &anchor).unwrap();
+        let base = Snapshot::build(game, &job.patterns, &job.excludes, &anchor).unwrap();
         state
             .put_snapshot(game, &base.files, base.taken_at, Some(head_a))
             .await?;

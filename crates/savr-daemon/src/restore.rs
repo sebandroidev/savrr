@@ -56,6 +56,9 @@ pub async fn run_restore(
         patterns: req.patterns.clone(),
         anchor: req.anchor.clone(),
         registry_keys: req.registry_keys.clone(),
+        // RestoreRequest carries no excludes (out of scope for Task 4): a
+        // pre-restore backup captures everything under the resolved patterns.
+        excludes: Vec::new(),
     };
     if let Err(e) = run_backup(state, Some(client), device_id, u32::MAX, &pre, blob_cache).await {
         // A failed pre-backup (e.g. offline) must not silently proceed to a

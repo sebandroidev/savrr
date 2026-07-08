@@ -23,7 +23,7 @@ use crate::client::ServerClient;
 use crate::config::DaemonConfig;
 use crate::detection::steam::{self, SteamLibrary};
 use crate::detection::{ExeIndex, SharedExeIndex};
-use crate::paths::{resolve_game, ResolveContext, ResolvedGame};
+use crate::paths::{resolve_custom, resolve_game, ResolveContext, ResolvedGame};
 use crate::restore::{run_restore, RestoreRequest};
 use crate::secrets::SecretStore;
 use crate::state::LocalState;
@@ -42,6 +42,7 @@ impl GameEntry {
             patterns: self.resolved.patterns.clone(),
             anchor: self.resolved.anchor.clone(),
             registry_keys: self.resolved.registry_keys.clone(),
+            excludes: self.resolved.excludes.clone(),
         }
     }
 }
@@ -203,7 +204,7 @@ impl Engine {
                     continue;
                 }
 
-                let game_id = self.game_id_for(sg.appid, &title, authed).await;
+                let game_id = self.game_id_for(Some(sg.appid), &title, authed).await;
                 let (source, save_targets) = match manifest_match {
                     Some((_, entry)) => (GameSource::Manifest, entry.save_targets()),
                     None => (GameSource::Steam, Vec::new()),
@@ -220,10 +221,104 @@ impl Engine {
                     last_session_secs: None,
                     total_secs: 0,
                 };
-                let resolved = resolve_game(&game, &overrides, &ctx);
+                let resolved = resolve_game(&game, &overrides, &ctx, None);
                 index.index_install_dir(&lib.install_path(sg), game_id);
                 games.insert(game_id, GameEntry { game, resolved });
             }
+        }
+
+        // Track normalized titles already in the catalog so a later source never
+        // duplicates a game an earlier (higher-precedence) source already added.
+        let mut seen: HashSet<String> = games
+            .values()
+            .map(|e| crate::naming::normalize_title(&e.game.title))
+            .collect();
+
+        // Capability A: auto-detect manifest-known games under generic "game
+        // folder" (Drive) roots by matching each install-folder name to the
+        // manifest.
+        let matcher = crate::scan::ManifestMatcher::build(&manifest);
+        for root in self.state.list_roots().await.unwrap_or_default() {
+            if root.kind != RootKind::Drive {
+                continue;
+            }
+            for (folder_name, install_dir) in
+                crate::scan::scan_folder_root(std::path::Path::new(&root.path))
+            {
+                let Some(title) = matcher.match_folder(&folder_name) else {
+                    continue;
+                };
+                let norm = crate::naming::normalize_title(&title);
+                if seen.contains(&norm) {
+                    continue;
+                }
+                let Some(entry) = manifest.get(&title) else {
+                    continue;
+                };
+                if self
+                    .config
+                    .games
+                    .get(title.as_str())
+                    .map(|g| g.ignore)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                seen.insert(norm);
+                let game_id = self.game_id_for(None, &title, authed).await;
+                let game = Game {
+                    id: game_id,
+                    title: title.clone(),
+                    source: GameSource::Manifest,
+                    steam_appid: None,
+                    save_targets: entry.save_targets(),
+                    running: false,
+                    last_played: None,
+                    last_session_secs: None,
+                    total_secs: 0,
+                };
+                let resolved = resolve_game(&game, &overrides, &ctx, Some(&install_dir));
+                index.index_install_dir(&install_dir, game_id);
+                games.insert(game_id, GameEntry { game, resolved });
+            }
+        }
+
+        // Capability B: hand-registered custom games (persisted).
+        for cg in self.state.list_custom_games().await.unwrap_or_default() {
+            let norm = crate::naming::normalize_title(&cg.title);
+            if !seen.insert(norm) {
+                continue;
+            }
+            let game_id = self.game_id_for(None, &cg.title, authed).await;
+            let game = Game {
+                id: game_id,
+                title: cg.title.clone(),
+                source: GameSource::Custom,
+                steam_appid: None,
+                save_targets: Vec::new(),
+                running: false,
+                last_played: None,
+                last_session_secs: None,
+                total_secs: 0,
+            };
+            let resolved = resolve_custom(&cg.save_root, &cg.include, &cg.exclude);
+            if let Some(p) = &cg.install_path {
+                let path = std::path::Path::new(p);
+                if path.is_dir() {
+                    index.index_install_dir(path, game_id);
+                } else {
+                    // An exe install_path: index the exe itself, plus its
+                    // parent dir so sibling launcher exes are caught too
+                    // (design spec: exe -> that exe + its parent dir).
+                    index.insert_exe(path, game_id);
+                    if let Some(parent) = path.parent() {
+                        if parent.is_dir() {
+                            index.index_install_dir(parent, game_id);
+                        }
+                    }
+                }
+            }
+            games.insert(game_id, GameEntry { game, resolved });
         }
 
         let n = games.len();
@@ -249,7 +344,8 @@ impl Engine {
         Ok(libs)
     }
 
-    /// Stable game id for a Steam appid. When paired, prefer the server's
+    /// Stable game id for a game, keyed by Steam appid or, for non-Steam
+    /// games, by normalized name. When paired, prefer the server's
     /// canonical id so multiple devices agree on one id per game — but NEVER let
     /// a server hiccup (unreachable, token not ready at startup) fail the whole
     /// catalog refresh. On any failure, fall back to a cached or freshly-minted
@@ -257,8 +353,11 @@ impl Engine {
     ///
     /// ponytail: a game first seen offline keeps a local id; reconciling an
     /// already-uploaded local id with the server id is a follow-up.
-    async fn game_id_for(&self, appid: u32, title: &str, authed: bool) -> GameId {
-        let key = format!("gameid:steam:{appid}");
+    async fn game_id_for(&self, appid: Option<u32>, title: &str, authed: bool) -> GameId {
+        let key = match appid {
+            Some(a) => format!("gameid:steam:{a}"),
+            None => format!("gameid:name:{}", crate::naming::normalize_title(title)),
+        };
         // Distinguish a read ERROR from a genuinely-absent key: on a transient DB
         // hiccup we must NOT mint-and-persist a fresh id, or we'd clobber the
         // stable id still on disk and orphan all history keyed by it.
@@ -270,7 +369,7 @@ impl Engine {
             .and_then(|s| uuid::Uuid::parse_str(&s).ok());
 
         if authed {
-            match self.client.ensure_game(title, Some(appid)).await {
+            match self.client.ensure_game(title, appid).await {
                 Ok(ensured) => {
                     if cached != Some(ensured.id) {
                         let _ = self.state.set_meta(&key, &ensured.id.to_string()).await;
@@ -376,6 +475,34 @@ impl Engine {
                 Ok(()) => DaemonMsg::Ok,
                 Err(e) => err(e),
             },
+            GuiRequest::AddCustomGame { spec } => {
+                let cg = crate::state::CustomGame {
+                    title: spec.title,
+                    install_path: spec.install_path,
+                    save_root: spec.save_root,
+                    include: spec.include,
+                    exclude: spec.exclude,
+                };
+                match self.state.add_custom_game(&cg).await {
+                    Ok(()) => {
+                        if let Err(e) = self.refresh_games(true).await {
+                            tracing::warn!("refresh after add_custom_game failed: {e}");
+                        }
+                        DaemonMsg::Ok
+                    }
+                    Err(e) => err(e),
+                }
+            }
+            GuiRequest::RemoveCustomGame { title } => {
+                let norm = crate::naming::normalize_title(&title);
+                match self.state.remove_custom_game(&norm).await {
+                    Ok(()) => {
+                        let _ = self.refresh_games(true).await;
+                        DaemonMsg::Ok
+                    }
+                    Err(e) => err(e),
+                }
+            }
             // Shutdown is intercepted in serve_connection (it drains the whole
             // daemon, not just answers a reply), so it never reaches dispatch.
             GuiRequest::Shutdown => DaemonMsg::Ok,

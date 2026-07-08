@@ -23,6 +23,10 @@ pub struct ResolvedGame {
     /// Stable anchor the snapshot's `rel_path`s are computed against, so the
     /// same save set hashes identically across machines.
     pub anchor: PathBuf,
+    /// Glob patterns matched against each file's anchor-relative path;
+    /// matching files are omitted from the snapshot. Empty for manifest/Steam
+    /// games — populated for manually-added games (PRD-02 §1.5).
+    pub excludes: Vec<String>,
 }
 
 /// Everything path resolution needs from the environment.
@@ -79,9 +83,18 @@ fn proton_prefix_roots(base: &Roots, drive_c: &Path) -> Roots {
 }
 
 /// Resolve a game's save targets into concrete globs, applying any account
-/// override for it.
-pub fn resolve_game(game: &Game, overrides: &[PathOverride], ctx: &ResolveContext) -> ResolvedGame {
-    let base = ctx.install_dir(game.steam_appid);
+/// override for it. `base_override`, when set, supplies `<base>` directly
+/// (e.g. a non-Steam game's scanned install dir) instead of looking it up via
+/// a Steam appid.
+pub fn resolve_game(
+    game: &Game,
+    overrides: &[PathOverride],
+    ctx: &ResolveContext,
+    base_override: Option<&Path>,
+) -> ResolvedGame {
+    let base = base_override
+        .map(Path::to_path_buf)
+        .or_else(|| ctx.install_dir(game.steam_appid));
     let proton = ctx.proton_roots(game.steam_appid);
 
     let mut patterns: Vec<String> = Vec::new();
@@ -124,6 +137,32 @@ pub fn resolve_game(game: &Game, overrides: &[PathOverride], ctx: &ResolveContex
         patterns,
         registry_keys,
         anchor,
+        excludes: Vec::new(),
+    }
+}
+
+/// Resolve a hand-registered game's save location: join each include glob onto
+/// the save root, keep the excludes for the snapshot walk, and anchor on the
+/// save root so rel_paths are stable. Separators are normalized to `/` so the
+/// `glob` crate (which treats `\` as an escape) works on Windows paths.
+pub fn resolve_custom(save_root: &str, include: &[String], exclude: &[String]) -> ResolvedGame {
+    let root = save_root.replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    let includes: Vec<String> = if include.is_empty() {
+        vec!["**/*".to_string()]
+    } else {
+        include.iter().map(|g| g.replace('\\', "/")).collect()
+    };
+    let patterns = includes
+        .iter()
+        .map(|g| format!("{root}/{}", g.trim_start_matches('/')))
+        .collect();
+    let excludes = exclude.iter().map(|g| g.replace('\\', "/")).collect();
+    ResolvedGame {
+        patterns,
+        registry_keys: Vec::new(),
+        anchor: PathBuf::from(root),
+        excludes,
     }
 }
 
@@ -333,6 +372,28 @@ mod tests {
             expand_steam_placeholders("<root>/userdata/<storeUserId>/1/remote", &no_accounts)
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn resolve_custom_joins_globs_onto_save_root() {
+        let r = resolve_custom("D:\\Saves\\Game", &["**/*.sav".into()], &["logs/**".into()]);
+        assert_eq!(r.patterns, vec!["D:/Saves/Game/**/*.sav".to_string()]);
+        assert_eq!(r.anchor, std::path::PathBuf::from("D:/Saves/Game"));
+        assert_eq!(r.excludes, vec!["logs/**".to_string()]);
+
+        let d = resolve_custom("/home/u/saves", &[], &[]);
+        assert_eq!(d.patterns, vec!["/home/u/saves/**/*".to_string()]);
+
+        // Windows-style backslash globs (as a user might type them) must be
+        // normalized to forward slashes too — the `glob` crate treats `\` as
+        // an escape, and excludes are matched against `/`-normalized rel_paths.
+        let bs = resolve_custom(
+            "D:\\Saves\\Game",
+            &["saves\\**".into()],
+            &["logs\\**".into()],
+        );
+        assert_eq!(bs.patterns, vec!["D:/Saves/Game/saves/**".to_string()]);
+        assert_eq!(bs.excludes, vec!["logs/**".to_string()]);
     }
 
     fn test_roots() -> Roots {
