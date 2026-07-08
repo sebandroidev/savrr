@@ -204,7 +204,7 @@ impl Engine {
                     continue;
                 }
 
-                let game_id = self.game_id_for(sg.appid, &title, authed).await;
+                let game_id = self.game_id_for(Some(sg.appid), &title, authed).await;
                 let (source, save_targets) = match manifest_match {
                     Some((_, entry)) => (GameSource::Manifest, entry.save_targets()),
                     None => (GameSource::Steam, Vec::new()),
@@ -258,8 +258,11 @@ impl Engine {
     ///
     /// ponytail: a game first seen offline keeps a local id; reconciling an
     /// already-uploaded local id with the server id is a follow-up.
-    async fn game_id_for(&self, appid: u32, title: &str, authed: bool) -> GameId {
-        let key = format!("gameid:steam:{appid}");
+    async fn game_id_for(&self, appid: Option<u32>, title: &str, authed: bool) -> GameId {
+        let key = match appid {
+            Some(a) => format!("gameid:steam:{a}"),
+            None => format!("gameid:name:{}", crate::naming::normalize_title(title)),
+        };
         // Distinguish a read ERROR from a genuinely-absent key: on a transient DB
         // hiccup we must NOT mint-and-persist a fresh id, or we'd clobber the
         // stable id still on disk and orphan all history keyed by it.
@@ -271,7 +274,7 @@ impl Engine {
             .and_then(|s| uuid::Uuid::parse_str(&s).ok());
 
         if authed {
-            match self.client.ensure_game(title, Some(appid)).await {
+            match self.client.ensure_game(title, appid).await {
                 Ok(ensured) => {
                     if cached != Some(ensured.id) {
                         let _ = self.state.set_meta(&key, &ensured.id.to_string()).await;
