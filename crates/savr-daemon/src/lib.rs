@@ -20,6 +20,7 @@ pub mod manifest_sync;
 pub mod naming;
 pub mod paths;
 pub mod restore;
+pub mod scan;
 pub mod secrets;
 pub mod state;
 pub mod tray;
