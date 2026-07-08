@@ -8,10 +8,13 @@
   import Roots from "./views/Roots.svelte";
   import Settings from "./views/Settings.svelte";
   import Pairing from "./views/Pairing.svelte";
+  import Logs from "./views/Logs.svelte";
   import { checkForUpdates } from "./lib/updater";
   import { getVersion } from "@tauri-apps/api/app";
+  import { devMode } from "./lib/devmode";
+  import { installGlobalErrorCapture } from "./lib/devlog";
 
-  type ViewId = "dashboard" | "games" | "conflicts" | "roots" | "settings";
+  type ViewId = "dashboard" | "games" | "conflicts" | "roots" | "settings" | "logs";
 
   const NAV: { id: ViewId; label: string; icon: string }[] = [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
@@ -20,6 +23,11 @@
     { id: "roots", label: "Roots", icon: "roots" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
+
+  // Developer-mode-only tab; appended to the nav when the toggle is on.
+  const nav = $derived(
+    $devMode ? [...NAV, { id: "logs" as ViewId, label: "Logs", icon: "terminal" }] : NAV,
+  );
 
   const ONBOARD_KEY = "savr.onboarded";
   const THEME_KEY = "savr.theme";
@@ -46,7 +54,13 @@
     view = "dashboard";
   }
 
+  // Turning off developer mode while viewing Logs drops you back to Dashboard.
+  $effect(() => {
+    if (view === "logs" && !$devMode) view = "dashboard";
+  });
+
   onMount(() => {
+    installGlobalErrorCapture();
     applyTheme();
     getVersion()
       .then((v) => (version = v))
@@ -66,7 +80,7 @@
         <span class="name">Savr</span>
       </div>
       <nav>
-        {#each NAV as item}
+        {#each nav as item}
           <button
             class="nav-item"
             class:active={view === item.id}
@@ -97,6 +111,8 @@
         <Roots />
       {:else if view === "settings"}
         <Settings {theme} onToggleTheme={toggleTheme} />
+      {:else if view === "logs" && $devMode}
+        <Logs />
       {/if}
     </main>
   </div>

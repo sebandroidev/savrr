@@ -4090,7 +4090,7 @@ dependencies = [
 
 [[package]]
 name = "savr-app"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "chrono",
  "dirs",
@@ -4114,7 +4114,7 @@ dependencies = [
 
 [[package]]
 name = "savr-core"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "blake3",
  "chrono",
@@ -4133,7 +4133,7 @@ dependencies = [
 
 [[package]]
 name = "savr-daemon"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "blake3",
@@ -4165,7 +4165,7 @@ dependencies = [
 
 [[package]]
 name = "savr-server"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "argon2",
  "axum",

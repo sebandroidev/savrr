@@ -503,6 +503,7 @@ impl Engine {
                     Err(e) => err(e),
                 }
             }
+            GuiRequest::GetLogs { max_lines } => DaemonMsg::Logs(crate::logs::tail(max_lines)),
             // Shutdown is intercepted in serve_connection (it drains the whole
             // daemon, not just answers a reply), so it never reaches dispatch.
             GuiRequest::Shutdown => DaemonMsg::Ok,

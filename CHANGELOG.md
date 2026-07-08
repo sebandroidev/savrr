@@ -2,6 +2,18 @@
 
 Notable changes to Savrr. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions aim for [semantic versioning](https://semver.org/spec/v2.0.0.html) once past 1.0.
 
+## [0.1.11] - 2026-07-08
+
+See what Savr is doing, and stop failing silently.
+
+### Fixed
+
+- Picking a folder or file (for example "Add game folder") could fail with no message at all — the button did nothing and no error appeared. Those failures are now surfaced, so you get a real error instead of silence.
+
+### Added
+
+- A **Developer mode** toggle under Settings → Advanced. Turn it on and a **Logs** tab appears, showing the background daemon's activity and any in-app errors, with buttons to copy or download the logs. It's meant for diagnosing when something doesn't work — like a game folder that won't add.
+
 ## [0.1.10] - 2026-07-08
 
 Back up games that don't come from Steam.
@@ -123,6 +135,7 @@ The first working slice of the whole system: shared core, server, headless daemo
 
 - An adversarial code review before release fixed a device-revocation gap (a revoked device kept its WebSocket), an offline-differential backup inconsistency, a config-sync tag drop, and a device-state oracle on `/auth/refresh`. Remaining known issues are tracked in [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md).
 
+[0.1.11]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.11
 [0.1.10]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.10
 [0.1.9]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.9
 [0.1.8]: https://github.com/sebandroidev/savrr/releases/tag/v0.1.8

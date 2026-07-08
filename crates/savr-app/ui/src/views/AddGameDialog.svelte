@@ -21,13 +21,21 @@
   let busy = $state(false);
 
   async function pickInstall() {
-    const p = await open({ title: "Game .exe or install folder" });
-    if (typeof p === "string") installPath = p;
+    try {
+      const p = await open({ title: "Game .exe or install folder" });
+      if (typeof p === "string") installPath = p;
+    } catch (e) {
+      error = errorMessage(e);
+    }
   }
 
   async function pickSave() {
-    const p = await open({ directory: true, title: "Save folder" });
-    if (typeof p === "string") saveRoot = p;
+    try {
+      const p = await open({ directory: true, title: "Save folder" });
+      if (typeof p === "string") saveRoot = p;
+    } catch (e) {
+      error = errorMessage(e);
+    }
   }
 
   const lines = (s: string) =>

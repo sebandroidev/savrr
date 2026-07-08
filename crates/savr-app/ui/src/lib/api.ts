@@ -58,3 +58,9 @@ export const addCustomGame = (spec: CustomGameSpec) =>
 
 export const removeCustomGame = (title: string) =>
   invoke<void>("remove_custom_game", { title });
+
+export const getLogs = (maxLines: number) =>
+  invoke<string[]>("get_logs", { maxLines });
+
+export const writeTextFile = (path: string, contents: string) =>
+  invoke<void>("write_text_file", { path, contents });

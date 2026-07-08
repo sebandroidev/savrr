@@ -126,6 +126,8 @@ pub fn run() {
             commands::pair_device,
             commands::add_custom_game,
             commands::remove_custom_game,
+            commands::get_logs,
+            commands::write_text_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while running the Savr application")

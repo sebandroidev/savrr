@@ -158,6 +158,10 @@ pub enum GuiRequest {
     RemoveCustomGame {
         title: String,
     },
+    /// Fetch the tail of the daemon's log file for the Developer view.
+    GetLogs {
+        max_lines: usize,
+    },
     /// Ask the daemon to shut down. The app sends this before an update relaunch
     /// so whatever daemon is listening — a bundled sidecar or a login-started
     /// headless one the app merely adopted — exits and frees the socket for the
@@ -176,6 +180,7 @@ pub enum DaemonMsg {
     Games(Vec<Game>),
     Versions(Vec<Version>),
     Roots(Vec<Root>),
+    Logs(Vec<String>),
     Status(DaemonStatus),
     Config(Box<SyncedConfig>),
     Event(DetectionEvent),
@@ -352,5 +357,16 @@ mod tests {
         let frame = encode_frame(&GuiRequest::RemoveCustomGame { title: "X".into() }).unwrap();
         let back: GuiRequest = serde_json::from_slice(&frame[4..]).unwrap();
         assert!(matches!(back, GuiRequest::RemoveCustomGame { .. }));
+    }
+
+    #[test]
+    fn get_logs_and_logs_reply_encode() {
+        let frame = encode_frame(&GuiRequest::GetLogs { max_lines: 500 }).unwrap();
+        let back: GuiRequest = serde_json::from_slice(&frame[4..]).unwrap();
+        assert!(matches!(back, GuiRequest::GetLogs { max_lines: 500 }));
+
+        let frame = encode_frame(&DaemonMsg::Logs(vec!["a".into(), "b".into()])).unwrap();
+        let back: DaemonMsg = serde_json::from_slice(&frame[4..]).unwrap();
+        assert!(matches!(back, DaemonMsg::Logs(v) if v.len() == 2));
     }
 }

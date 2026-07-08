@@ -16,6 +16,7 @@
   import { checkForUpdates } from "../lib/updater";
   import Icon from "../components/Icon.svelte";
   import Spinner from "../components/Spinner.svelte";
+  import { devMode } from "../lib/devmode";
 
   interface Props {
     theme: "dark" | "light";
@@ -200,6 +201,23 @@
       <button onclick={onToggleTheme}>
         <Icon name={theme === "dark" ? "sun" : "moon"} size={15} />
         {theme === "dark" ? "Light mode" : "Dark mode"}
+      </button>
+    </div>
+  </div>
+
+  <div class="card section">
+    <h2>Advanced</h2>
+    <div class="app-row">
+      <div>
+        <div class="app-title">Developer mode</div>
+        <div class="dim">
+          Adds a Logs tab showing daemon activity and in-app errors — useful when
+          something doesn't work and you need to see why.
+        </div>
+      </div>
+      <button onclick={() => devMode.set(!$devMode)} class:primary={!$devMode}>
+        <Icon name={$devMode ? "check" : "terminal"} size={15} />
+        {$devMode ? "Turn off" : "Turn on"}
       </button>
     </div>
   </div>

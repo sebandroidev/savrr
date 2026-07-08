@@ -169,6 +169,24 @@ pub async fn remove_custom_game(title: String) -> Result<(), CmdError> {
     expect_ok(request(GuiRequest::RemoveCustomGame { title }).await?)
 }
 
+/// Fetch the tail of the daemon's log file for the Developer view.
+#[tauri::command]
+pub async fn get_logs(max_lines: usize) -> Result<Vec<String>, CmdError> {
+    match request(GuiRequest::GetLogs { max_lines }).await? {
+        DaemonMsg::Logs(lines) => Ok(lines),
+        other => Err(CmdError::Protocol(format!("expected Logs, got {other:?}"))),
+    }
+}
+
+/// Write text to a user-chosen path (the Developer view's "Download logs").
+/// A first-party command so it needs no filesystem-plugin permission; the path
+/// comes from the native save dialog the user just confirmed.
+#[tauri::command]
+pub async fn write_text_file(path: String, contents: String) -> Result<(), CmdError> {
+    std::fs::write(&path, contents)
+        .map_err(|e| CmdError::Io(format!("could not write {path}: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

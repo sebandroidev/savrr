@@ -122,13 +122,16 @@
   }
 
   async function addGameFolder() {
-    const dir = await open({
-      directory: true,
-      title: "Pick a folder that contains your games",
-    });
-    if (typeof dir !== "string") return;
-    addingFolder = true;
     try {
+      // The picker itself can throw (permissions, platform quirks); keep it
+      // inside the try so any failure surfaces as a toast instead of a silent
+      // no-op. A cancelled picker returns a non-string and is a quiet no-op.
+      const dir = await open({
+        directory: true,
+        title: "Pick a folder that contains your games",
+      });
+      if (typeof dir !== "string") return;
+      addingFolder = true;
       await addRoot({ kind: "drive", path: dir });
       notify.success("Game folder added.");
       await loadGames();
