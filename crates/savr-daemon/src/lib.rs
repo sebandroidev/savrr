@@ -17,6 +17,7 @@ pub mod detection;
 pub mod engine;
 pub mod ipc;
 pub mod manifest_sync;
+pub mod naming;
 pub mod paths;
 pub mod restore;
 pub mod secrets;
