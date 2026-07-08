@@ -5,7 +5,9 @@
 //! mismatched reply becomes a [`CmdError::Protocol`]; a missing daemon becomes
 //! [`CmdError::DaemonUnreachable`]. Nothing here panics.
 
-use savr_core::ipc::{DaemonMsg, DaemonStatus, GuiRequest, ResolveChoice, Root, RootSpec};
+use savr_core::ipc::{
+    CustomGameSpec, DaemonMsg, DaemonStatus, GuiRequest, ResolveChoice, Root, RootSpec,
+};
 use savr_core::types::{Game, GameId, SyncedConfig, Version, VersionId};
 use tauri::Manager;
 use uuid::Uuid;
@@ -155,6 +157,16 @@ pub async fn pair_device(
             "expected Paired, got {other:?}"
         ))),
     }
+}
+
+#[tauri::command]
+pub async fn add_custom_game(spec: CustomGameSpec) -> Result<(), CmdError> {
+    expect_ok(request(GuiRequest::AddCustomGame { spec }).await?)
+}
+
+#[tauri::command]
+pub async fn remove_custom_game(title: String) -> Result<(), CmdError> {
+    expect_ok(request(GuiRequest::RemoveCustomGame { title }).await?)
 }
 
 #[cfg(test)]

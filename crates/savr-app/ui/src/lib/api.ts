@@ -3,6 +3,7 @@
 // `CmdError` object ({ kind, message }).
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CustomGameSpec,
   DaemonStatus,
   Game,
   ResolveChoice,
@@ -51,3 +52,9 @@ export const pairDevice = (
   code: string,
   deviceName: string,
 ) => invoke<Uuid>("pair_device", { serverUrl, code, deviceName });
+
+export const addCustomGame = (spec: CustomGameSpec) =>
+  invoke<void>("add_custom_game", { spec });
+
+export const removeCustomGame = (title: string) =>
+  invoke<void>("remove_custom_game", { title });

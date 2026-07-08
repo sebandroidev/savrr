@@ -466,6 +466,34 @@ impl Engine {
                 Ok(()) => DaemonMsg::Ok,
                 Err(e) => err(e),
             },
+            GuiRequest::AddCustomGame { spec } => {
+                let cg = crate::state::CustomGame {
+                    title: spec.title,
+                    install_path: spec.install_path,
+                    save_root: spec.save_root,
+                    include: spec.include,
+                    exclude: spec.exclude,
+                };
+                match self.state.add_custom_game(&cg).await {
+                    Ok(()) => {
+                        if let Err(e) = self.refresh_games(true).await {
+                            tracing::warn!("refresh after add_custom_game failed: {e}");
+                        }
+                        DaemonMsg::Ok
+                    }
+                    Err(e) => err(e),
+                }
+            }
+            GuiRequest::RemoveCustomGame { title } => {
+                let norm = crate::naming::normalize_title(&title);
+                match self.state.remove_custom_game(&norm).await {
+                    Ok(()) => {
+                        let _ = self.refresh_games(true).await;
+                        DaemonMsg::Ok
+                    }
+                    Err(e) => err(e),
+                }
+            }
             // Shutdown is intercepted in serve_connection (it drains the whole
             // daemon, not just answers a reply), so it never reaches dispatch.
             GuiRequest::Shutdown => DaemonMsg::Ok,

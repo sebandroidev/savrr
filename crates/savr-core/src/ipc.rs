@@ -32,6 +32,16 @@ pub struct Root {
     pub path: String,
 }
 
+/// A hand-registered game not found in any Steam library.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CustomGameSpec {
+    pub title: String,
+    pub install_path: Option<String>,
+    pub save_root: String,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResolveChoice {
@@ -139,6 +149,14 @@ pub enum GuiRequest {
     /// can't serialize a newtype variant wrapping a bare primitive.
     SetAutostart {
         enabled: bool,
+    },
+    /// Register a game not found in any Steam library.
+    AddCustomGame {
+        spec: CustomGameSpec,
+    },
+    /// Remove a hand-registered game by its title.
+    RemoveCustomGame {
+        title: String,
     },
     /// Ask the daemon to shut down. The app sends this before an update relaunch
     /// so whatever daemon is listening — a bundled sidecar or a login-started
@@ -311,5 +329,28 @@ mod tests {
         let frame = encode_frame(&GuiRequest::Shutdown).expect("Shutdown must encode");
         let back: GuiRequest = serde_json::from_slice(&frame[4..]).unwrap();
         assert!(matches!(back, GuiRequest::Shutdown));
+    }
+
+    #[test]
+    fn add_custom_game_encodes() {
+        let req = GuiRequest::AddCustomGame {
+            spec: CustomGameSpec {
+                title: "X".into(),
+                install_path: None,
+                save_root: "/s".into(),
+                include: vec!["**/*".into()],
+                exclude: vec![],
+            },
+        };
+        let frame = encode_frame(&req).expect("must encode");
+        let back: GuiRequest = serde_json::from_slice(&frame[4..]).unwrap();
+        assert!(matches!(back, GuiRequest::AddCustomGame { .. }));
+    }
+
+    #[test]
+    fn remove_custom_game_encodes() {
+        let frame = encode_frame(&GuiRequest::RemoveCustomGame { title: "X".into() }).unwrap();
+        let back: GuiRequest = serde_json::from_slice(&frame[4..]).unwrap();
+        assert!(matches!(back, GuiRequest::RemoveCustomGame { .. }));
     }
 }
