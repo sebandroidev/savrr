@@ -148,20 +148,21 @@ pub fn resolve_game(
 pub fn resolve_custom(save_root: &str, include: &[String], exclude: &[String]) -> ResolvedGame {
     let root = save_root.replace('\\', "/");
     let root = root.trim_end_matches('/');
-    let includes = if include.is_empty() {
+    let includes: Vec<String> = if include.is_empty() {
         vec!["**/*".to_string()]
     } else {
-        include.to_vec()
+        include.iter().map(|g| g.replace('\\', "/")).collect()
     };
     let patterns = includes
         .iter()
         .map(|g| format!("{root}/{}", g.trim_start_matches('/')))
         .collect();
+    let excludes = exclude.iter().map(|g| g.replace('\\', "/")).collect();
     ResolvedGame {
         patterns,
         registry_keys: Vec::new(),
         anchor: PathBuf::from(root),
-        excludes: exclude.to_vec(),
+        excludes,
     }
 }
 
@@ -382,6 +383,17 @@ mod tests {
 
         let d = resolve_custom("/home/u/saves", &[], &[]);
         assert_eq!(d.patterns, vec!["/home/u/saves/**/*".to_string()]);
+
+        // Windows-style backslash globs (as a user might type them) must be
+        // normalized to forward slashes too — the `glob` crate treats `\` as
+        // an escape, and excludes are matched against `/`-normalized rel_paths.
+        let bs = resolve_custom(
+            "D:\\Saves\\Game",
+            &["saves\\**".into()],
+            &["logs\\**".into()],
+        );
+        assert_eq!(bs.patterns, vec!["D:/Saves/Game/saves/**".to_string()]);
+        assert_eq!(bs.excludes, vec!["logs/**".to_string()]);
     }
 
     fn test_roots() -> Roots {

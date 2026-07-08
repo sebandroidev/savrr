@@ -249,7 +249,7 @@ impl Engine {
                     continue;
                 };
                 let norm = crate::naming::normalize_title(&title);
-                if !seen.insert(norm) {
+                if seen.contains(&norm) {
                     continue;
                 }
                 let Some(entry) = manifest.get(&title) else {
@@ -264,6 +264,7 @@ impl Engine {
                 {
                     continue;
                 }
+                seen.insert(norm);
                 let game_id = self.game_id_for(None, &title, authed).await;
                 let game = Game {
                     id: game_id,
@@ -306,7 +307,15 @@ impl Engine {
                 if path.is_dir() {
                     index.index_install_dir(path, game_id);
                 } else {
+                    // An exe install_path: index the exe itself, plus its
+                    // parent dir so sibling launcher exes are caught too
+                    // (design spec: exe -> that exe + its parent dir).
                     index.insert_exe(path, game_id);
+                    if let Some(parent) = path.parent() {
+                        if parent.is_dir() {
+                            index.index_install_dir(parent, game_id);
+                        }
+                    }
                 }
             }
             games.insert(game_id, GameEntry { game, resolved });

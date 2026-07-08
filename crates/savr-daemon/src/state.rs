@@ -513,6 +513,20 @@ impl LocalState {
             !norm.is_empty(),
             "game title must contain letters or digits"
         );
+        // Pre-check for a clear, deterministic duplicate message instead of
+        // leaking the raw SQL error (e.g. "UNIQUE constraint failed") up to
+        // the GUI. A genuine DB error on the insert itself still surfaces
+        // distinctly below.
+        let existing: Option<String> =
+            sqlx::query_scalar("SELECT norm_title FROM custom_games WHERE norm_title = ?")
+                .bind(&norm)
+                .fetch_optional(&self.pool)
+                .await?;
+        anyhow::ensure!(
+            existing.is_none(),
+            "a game named '{}' is already added",
+            g.title
+        );
         sqlx::query(
             "INSERT INTO custom_games \
              (norm_title, title, install_path, save_root, include_glob, exclude_glob) \
@@ -710,8 +724,13 @@ mod tests {
         };
         state.add_custom_game(&g).await.unwrap();
 
-        // Duplicate normalized title is rejected.
-        assert!(state.add_custom_game(&g).await.is_err());
+        // Duplicate normalized title is rejected with a clean message (no
+        // raw SQL error leaking through).
+        let err = state.add_custom_game(&g).await.unwrap_err();
+        assert!(
+            err.to_string().contains("already"),
+            "unexpected error message: {err}"
+        );
 
         let all = state.list_custom_games().await.unwrap();
         assert_eq!(all.len(), 1);
