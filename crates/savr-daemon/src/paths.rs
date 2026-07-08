@@ -23,6 +23,10 @@ pub struct ResolvedGame {
     /// Stable anchor the snapshot's `rel_path`s are computed against, so the
     /// same save set hashes identically across machines.
     pub anchor: PathBuf,
+    /// Glob patterns matched against each file's anchor-relative path;
+    /// matching files are omitted from the snapshot. Empty for manifest/Steam
+    /// games — populated for manually-added games (PRD-02 §1.5).
+    pub excludes: Vec<String>,
 }
 
 /// Everything path resolution needs from the environment.
@@ -124,6 +128,7 @@ pub fn resolve_game(game: &Game, overrides: &[PathOverride], ctx: &ResolveContex
         patterns,
         registry_keys,
         anchor,
+        excludes: Vec::new(),
     }
 }
 

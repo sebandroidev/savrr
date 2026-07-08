@@ -42,6 +42,7 @@ impl GameEntry {
             patterns: self.resolved.patterns.clone(),
             anchor: self.resolved.anchor.clone(),
             registry_keys: self.resolved.registry_keys.clone(),
+            excludes: self.resolved.excludes.clone(),
         }
     }
 }
